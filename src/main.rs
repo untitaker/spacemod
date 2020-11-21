@@ -58,8 +58,7 @@ fn main() -> Result<(), Error> {
     let Cli { search, replace } = Cli::from_args();
     let term = console::Term::stdout();
 
-    let expr =
-        Expr::parse_expr(&search).context("failed to parse search string")?;
+    let expr = Expr::parse_expr(&search).context("failed to parse search string")?;
     let replacer = expr.get_replacer()?;
 
     let mut change_all = false;

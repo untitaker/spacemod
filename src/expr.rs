@@ -173,77 +173,40 @@ pub struct Replacer<'a> {
     reverse_pairs: Pairs,
 }
 
-enum ReplaceResult<'t> {
-    /// The underlying regex engine returned no matches, there is no point in trimming
-    NoMatches,
-    /// The underlying regex engine returned matches but they have mismatching parenthesis
-    NoReplacements,
-    /// Something got replaced, don't continue trimming
-    Replaced(Cow<'t, str>),
-}
-
 /// Try and apply the replacement function on various substrings of input. This is a workaround for
 /// our regex engine not supporting overlapping matches.
-fn replace_substrings<'t>(
-    mut input: &'t str,
-    mut replacer: impl FnMut(&'t str) -> ReplaceResult<'t>,
+fn replace_overlapping<'t>(
+    input: &'t str,
+    mut replacer: impl FnMut(&str) -> Option<(usize, String)>,
 ) -> Cow<'t, str> {
-    let orig_input = input;
-    let mut suffix = String::new();
-    loop {
-        match replacer(input) {
-            ReplaceResult::NoMatches => break,
-            ReplaceResult::NoReplacements => {
-                let popped_suffix = input.chars().rev().next().unwrap();
-                suffix.push(popped_suffix);
-                input = &input[..input.len() - popped_suffix.len_utf8()];
-            }
-            ReplaceResult::Replaced(rv) => {
-                let mut rv = rv.into_owned();
-                for c in suffix.chars().rev() {
-                    rv.push(c);
-                }
+    let mut input = input.to_owned();
+    let mut prefix = String::new();
 
-                return Cow::Owned(rv);
-            }
+    while let Some((i, replacement)) = replacer(&input) {
+        let (add_prefix, new_input) = replacement.split_at(i);
+        prefix.push_str(add_prefix);
+        input = new_input.to_owned();
+
+        if input.is_empty() {
+            break;
         }
+        let c = input.chars().next().unwrap();
+        prefix.push(c);
+        input = input[c.len_utf8()..].to_owned();
     }
 
-    input = orig_input;
-    let mut prefix = suffix;
-    prefix.clear();
-
-    loop {
-        match replacer(input) {
-            ReplaceResult::NoMatches => break,
-            ReplaceResult::NoReplacements => {
-                let popped_prefix = input.chars().next().unwrap();
-                prefix.push(popped_prefix);
-                input = &input[popped_prefix.len_utf8()..];
-            }
-            ReplaceResult::Replaced(rv) => {
-                for c in rv.chars() {
-                    prefix.push(c);
-                }
-
-                return Cow::Owned(prefix);
-            }
-        }
-    }
-
-    input.into()
+    prefix.push_str(&input);
+    prefix.into()
 }
 
 impl<'a> Replacer<'a> {
     pub fn replace<'t>(&self, input: &'t str, sub: &str) -> Cow<'t, str> {
-        replace_substrings(input, |input| {
-            let mut potential_matches = false;
-            let mut replaced_anything = false;
+        replace_overlapping(input, |input| {
+            let mut matched_at = None;
 
             let rv = self.regex.replace(input, |captures: &Captures<'_>| {
-                potential_matches = true;
-
                 let full_match = captures.get(0).unwrap();
+                matched_at = Some(full_match.start());
                 let match_str = &input[full_match.start()..full_match.end()];
 
                 let mut expr_parens = self
@@ -277,23 +240,23 @@ impl<'a> Replacer<'a> {
                     }
                 }
 
-                if expr_parens.peek().is_some() || !extra_stack.is_empty() {
+                if expr_parens.peek().is_some() {
                     return match_str.to_owned();
                 }
 
-                replaced_anything = true;
+                if !extra_stack.is_empty() {
+                    return match_str.to_owned();
+                }
 
                 let mut rv = String::new();
                 captures.expand(sub, &mut rv);
                 rv
             });
 
-            if replaced_anything {
-                ReplaceResult::Replaced(rv)
-            } else if potential_matches {
-                ReplaceResult::NoReplacements
+            if let Some(i) = matched_at {
+                Some((i, rv.into_owned()))
             } else {
-                ReplaceResult::NoMatches
+                None
             }
         })
     }
@@ -381,13 +344,23 @@ macro_rules! replacer_test {
     ($input:expr, $search:expr, $replace:expr, @$output:expr) => {{
         let search = Expr::parse_expr($search).unwrap();
         let replacer = search.get_replacer().unwrap();
+        let mut file = $input.to_owned();
+
+        println!("running replacer");
+
+        loop {
+            let new_file = replacer.replace(&*file, $replace);
+            if new_file == file {
+                break;
+            }
+
+            file = new_file.into_owned();
+        }
 
         insta::assert_snapshot!(
-            replacer.replace($input, $replace),
+            file,
             @$output
         );
-
-        $output
     }}
 }
 
@@ -431,19 +404,9 @@ fn test_relay_code() {
 
 #[test]
 fn test_example_good() {
-    let mut file = r#"vec!["foo".to_string(), "bar".to_string(), "baz".to_string()]"#;
+    let file = r#"vec!["foo".to_string(), "bar".to_string(), "baz".to_string()]"#;
     let search = r#"" (.*) " \.to_string ( )"#;
     let replace = r#"String::from("$1")"#;
-    file = replacer_test!(
-        file, search, replace,
-        @r###"vec![String::from("foo"), "bar".to_string(), "baz".to_string()]"###
-    );
-
-    file = replacer_test!(
-        file, search, replace,
-        @r###"vec![String::from("foo"), "bar".to_string(), String::from("baz")]"###
-    );
-
     replacer_test!(
         file, search, replace,
         @r###"vec![String::from("foo"), String::from("bar"), String::from("baz")]"###
@@ -452,21 +415,42 @@ fn test_example_good() {
 
 #[test]
 fn test_example_bad() {
-    let mut file = r#"vec!["foo".to_string(), "bar".to_string(), "baz".to_string()]"#;
+    let file = r#"vec!["foo".to_string(), "bar".to_string(), "baz".to_string()]"#;
     let search = r#""(.*)"\.to_string\(\)"#;
     let replace = r#"String::from("$1")"#;
-    file = replacer_test!(
-        file, search, replace,
-        @r###"vec![String::from("foo".to_string(), "bar".to_string(), "baz")]"###
-    );
-
-    file = replacer_test!(
-        file, search, replace,
-        @r###"vec![String::from(String::from("foo".to_string(), "bar"), "baz")]"###
-    );
-
     replacer_test!(
         file, search, replace,
         @r###"vec![String::from(String::from(String::from("foo"), "bar"), "baz")]"###
+    );
+}
+
+#[test]
+fn test_no_match() {
+    let file = r"foo bar baz";
+    let search = "hello";
+    let replace = "oh no";
+
+    replacer_test!(file, search, replace, @"foo bar baz");
+}
+
+#[test]
+fn test_regression1() {
+    let file = r###"fn foo() {
+    self.0.push(format!("process_value({})", state.path()));
+    self.0.push("before_process_child_values".to_string());
+    self.0.push("after_process_child_values".to_string());
+}"###;
+    let search = r#"" (.*) " \.to_string ( )"#;
+    let replace = r#"String::from("$1")"#;
+
+    replacer_test!(
+        file, search, replace,
+        @r###"
+    fn foo() {
+        self.0.push(format!("process_value({})", state.path()));
+        self.0.push(String::from("before_process_child_values"));
+        self.0.push(String::from("after_process_child_values"));
+    }
+    "###
     );
 }
