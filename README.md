@@ -8,6 +8,8 @@ expressions.
 `spacemod` ideally allows you to write more naive regexes and worry less about
 overzealous wildcard matching.
 
+***`spacemod` is still alpha software and full of known bugs.***
+
 ## Example
 
 Let's say you have the following piece of code:
