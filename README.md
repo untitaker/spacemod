@@ -8,7 +8,7 @@ expressions.
 `spacemod` ideally allows you to write more naive regexes and worry less about
 overzealous wildcard matching.
 
-***`spacemod` is still alpha software and full of known bugs.***
+***`spacemod` is still alpha software.*** Please [report](https://github.com/untitaker/spacemod/issues) any bugs you find.
 
 ## Example
 
