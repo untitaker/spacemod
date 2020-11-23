@@ -50,7 +50,7 @@ Spacing out parenthesis and quotes tells spacemod that those tokens, `""` and `(
 
 * must be balanced wherever they appear in a match
 * can have surrounding whitespace (including newlines)
-* are literals (less backslashes!)
+* are literals (fewer backslashes!)
 
 ## Installation
 
@@ -80,7 +80,7 @@ If you need to use a literal space anywhere in a regex substring, escape it as
 * `[]`
 * `()`
 * `""` and `''`. Since start and end are the same, this basically
-  devolves into asserting there is an even amount of tokens.
+  devolves into asserting there is an even number of tokens.
 
 Currently this list cannot be extended, but perhaps in the future.
 
