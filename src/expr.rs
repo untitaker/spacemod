@@ -68,11 +68,13 @@ impl Expr {
                 let open = *open;
                 let close = *close;
                 if let Some(close2) = rv.insert(open, close) {
-                    return Err(ParseError::MismatchedParenthesis {
-                        open,
-                        close,
-                        close2,
-                    });
+                    if close2 != close {
+                        return Err(ParseError::MismatchedParenthesis {
+                            open,
+                            close,
+                            close2,
+                        });
+                    }
                 }
             }
         }
@@ -521,9 +523,18 @@ fn test_remaining_expr_parens() {
     let search = r#"" (.*) " \.to_string ( )"#;
     let replace = r#"String::from("$1")"#;
 
-    replacer_test!(
-    file, search, replace, @r###"
+    replacer_test!(file, search, replace, @r###"
     // "foo"
     (String::from("some"))
     "###);
+}
+
+#[test]
+fn test_nested_parens() {
+    let file = r#"str(uuid.uuid4())"#;
+
+    let search = r#"str ( uuid.uuid4 ( ) )"#;
+    let replace = r#"uuid.uuid4().hex"#;
+
+    replacer_test!(file, search, replace, @"uuid.uuid4().hex");
 }
