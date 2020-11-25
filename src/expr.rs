@@ -147,11 +147,11 @@ impl Expr {
         rv
     }
 
-    pub fn get_replacer(&self) -> Result<Replacer<'_>, ParseError> {
+    pub fn get_replacer(&self, multiline: bool) -> Result<Replacer<'_>, ParseError> {
         let pairs = self.get_parenthesis_pairs()?;
         let regex_string = self.regex_string();
         let regex = RegexBuilder::new(&regex_string)
-            .multi_line(!pairs.is_empty())
+            .multi_line(!pairs.is_empty() || multiline)
             .dot_matches_new_line(!pairs.is_empty())
             .build()?;
 

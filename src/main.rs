@@ -3,10 +3,10 @@ mod expr;
 use std::collections::VecDeque;
 use std::fmt;
 use std::fs;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::{Context, Error};
-use ignore::Walk;
 use thiserror::Error;
 
 use structopt::StructOpt;
@@ -18,6 +18,20 @@ use expr::Expr;
 struct Cli {
     search: String,
     replace: String,
+
+    file_or_dir: Vec<PathBuf>,
+
+    /// Have regex work over multiple lines.
+    ///
+    /// When using parenthesis-matching, multiline mode is already enabled.
+    #[structopt(short = "m", long = "multiline")]
+    multiline: bool,
+    /// Automatically accept all changes (use with caution).
+    #[structopt(long = "accept-all")]
+    accept_all: bool,
+    /// A comma-delimited list of file extensions to process.
+    #[structopt(short = "e", long = "extensions")]
+    extensions: Vec<String>,
 }
 
 #[derive(Copy, Clone)]
@@ -55,15 +69,35 @@ impl fmt::Display for PromptAnswer {
 }
 
 fn main() -> Result<(), Error> {
-    let Cli { search, replace } = Cli::from_args();
+    let Cli {
+        search,
+        replace,
+        mut accept_all,
+        extensions,
+        file_or_dir,
+        multiline,
+    } = Cli::from_args();
     let term = console::Term::stdout();
 
     let expr = Expr::parse_expr(&search).context("failed to parse search string")?;
-    let replacer = expr.get_replacer()?;
+    let replacer = expr.get_replacer(multiline)?;
 
-    let mut change_all = false;
+    let mut walk_builder = ignore::WalkBuilder::new(".");
 
-    'files: for entry in Walk::new("./") {
+    for file in file_or_dir {
+        walk_builder.add(file);
+    }
+
+    if !extensions.is_empty() {
+        let mut builder = ignore::overrides::OverrideBuilder::new(".");
+        for ext in extensions {
+            builder.add(&format!("*.{}", ext))?;
+        }
+
+        walk_builder.overrides(builder.build()?);
+    }
+
+    'files: for entry in walk_builder.build() {
         let entry = entry?;
         let filetype = entry.file_type().unwrap();
         if !filetype.is_file() {
@@ -75,6 +109,8 @@ fn main() -> Result<(), Error> {
             Err(_) => continue, // presumably binary file
         };
 
+        let mut changed = false;
+
         loop {
             let new_file = replacer.replace(&file, &replace);
 
@@ -82,7 +118,7 @@ fn main() -> Result<(), Error> {
                 break;
             }
 
-            if !change_all {
+            if !accept_all {
                 term.clear_screen()?;
 
                 println!("{}\n\n\n", entry.path().display());
@@ -101,15 +137,20 @@ fn main() -> Result<(), Error> {
                         continue 'files;
                     }
                     PromptAnswer::All => {
-                        change_all = true;
+                        accept_all = true;
                     }
                     PromptAnswer::Yes => {}
                 }
             }
 
             fs::write(entry.path(), &*new_file)?;
+            changed = true;
 
             file = new_file.to_owned().to_string();
+        }
+
+        if accept_all && changed {
+            println!("changed {}", entry.path().display());
         }
     }
 
