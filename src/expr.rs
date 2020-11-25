@@ -176,7 +176,12 @@ pub struct Replacer<'a> {
 }
 
 enum MatchingAction {
+    /// Common case: replacer fn did all possible replacements for input ($1),
+    /// `replace_overlapping` should chop off $0 bytes from input and continue.
     ContinueAt(usize, String),
+    /// The replacer fn found a potential match but consumed all parenthesis of the expr before the
+    /// capture group ended. The procedure is retried (once) using the provided range:
+    /// `&input[$0..$1]`
     RetrySubstring(usize, usize),
 }
 
@@ -537,6 +542,46 @@ fn test_nested_parens() {
     let file = r#"str(uuid.uuid4())"#;
 
     let search = r#"str ( uuid.uuid4 ( ) )"#;
+    let replace = r#"uuid.uuid4().hex"#;
+
+    replacer_test!(file, search, replace, @"uuid.uuid4().hex");
+}
+
+#[test]
+fn test_regex_and_regular_parens() {
+    let file = r#"str(uuid.uuid4());"#;
+
+    let search = r#"str\( uuid.uuid4 ( ) \);"#;
+    let replace = r#"uuid.uuid4().hex;"#;
+
+    replacer_test!(file, search, replace, @"uuid.uuid4().hex;");
+}
+
+#[test]
+fn test_regex_and_regular_parens2() {
+    let file = r#"str(uuid.uuid4())"#;
+
+    let search = r#"str ( uuid.uuid4\(\) )"#;
+    let replace = r#"uuid.uuid4().hex"#;
+
+    replacer_test!(file, search, replace, @"uuid.uuid4().hex");
+}
+
+#[test]
+fn test_regex_and_regular_parens3() {
+    let file = r#"str{uuid.uuid4()};"#;
+
+    let search = r#"str\{ uuid.uuid4 ( ) \};"#;
+    let replace = r#"uuid.uuid4().hex;"#;
+
+    replacer_test!(file, search, replace, @"uuid.uuid4().hex;");
+}
+
+#[test]
+fn test_regex_and_regular_parens4() {
+    let file = r#"str{uuid.uuid4()}"#;
+
+    let search = r#"str { uuid.uuid4\(\) }"#;
     let replace = r#"uuid.uuid4().hex"#;
 
     replacer_test!(file, search, replace, @"uuid.uuid4().hex");
