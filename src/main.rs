@@ -82,11 +82,17 @@ fn main() -> Result<(), Error> {
     let expr = Expr::parse_expr(&search).context("failed to parse search string")?;
     let replacer = expr.get_replacer(multiline)?;
 
-    let mut walk_builder = ignore::WalkBuilder::new(".");
+    let mut walk_builder = if file_or_dir.is_empty() {
+        ignore::WalkBuilder::new(".")
+    } else {
+        let mut walk_builder = ignore::WalkBuilder::new(&file_or_dir[0]);
 
-    for file in file_or_dir {
-        walk_builder.add(file);
-    }
+        for file in &file_or_dir[1..] {
+            walk_builder.add(file);
+        }
+
+        walk_builder
+    };
 
     if !extensions.is_empty() {
         let mut builder = ignore::overrides::OverrideBuilder::new(".");

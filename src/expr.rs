@@ -276,7 +276,14 @@ impl<'a> Replacer<'a> {
                 ));
             }
 
-            assert!(!(expr_parens.peek().is_some() || !extra_stack.is_empty()));
+            assert!(!expr_parens.peek().is_some());
+
+            if !extra_stack.is_empty() {
+                return Some(MatchingAction::MatchedAt(
+                    full_match.start(),
+                    input.to_owned(),
+                ));
+            }
 
             let mut rv = input[..full_match.start()].to_owned();
             captures.expand(sub, &mut rv);
@@ -487,4 +494,23 @@ fn test_regression_extra_parens() {
     let replace = "";
 
     replacer_test!( file, search, replace, @" ; def foo(): pass");
+}
+
+#[test]
+fn test_garbage_string() {
+    let file = r###""do not ,./<>?!@#$%^&*())'ßtrip'".to_string(),
+Foo(Bar(Baz("foo".to_string()))),
+);
+map.insert("###;
+    let search = r#"" (.*) " \.to_string ( )"#;
+    let replace = r#"String::from("$1")"#;
+
+    replacer_test!(
+    file, search, replace, @r###"
+
+    "do not ,./<>?!@#$%^&*())'ßtrip'".to_string(),
+    Foo(Bar(Baz(String::from("foo")))),
+    );
+    map.insert(
+    "###);
 }
