@@ -276,9 +276,7 @@ impl<'a> Replacer<'a> {
                 ));
             }
 
-            assert!(!expr_parens.peek().is_some());
-
-            if !extra_stack.is_empty() {
+            if !extra_stack.is_empty() || expr_parens.peek().is_some() {
                 return Some(MatchingAction::MatchedAt(
                     full_match.start(),
                     input.to_owned(),
@@ -512,5 +510,20 @@ map.insert("###;
     Foo(Bar(Baz(String::from("foo")))),
     );
     map.insert(
+    "###);
+}
+
+#[test]
+fn test_remaining_expr_parens() {
+    let file = r#"// "foo"
+("some".to_string())"#;
+
+    let search = r#"" (.*) " \.to_string ( )"#;
+    let replace = r#"String::from("$1")"#;
+
+    replacer_test!(
+    file, search, replace, @r###"
+    // "foo"
+    (String::from("some"))
     "###);
 }
