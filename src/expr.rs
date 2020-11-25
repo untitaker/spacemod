@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use regex::{Captures, Regex, RegexBuilder};
+use regex::{Regex, RegexBuilder};
 
 use pest::error::Error;
 use pest::iterators::Pair;
@@ -173,16 +173,38 @@ pub struct Replacer<'a> {
     reverse_pairs: Pairs,
 }
 
+enum MatchingAction {
+    MatchedAt(usize, String),
+    EndsAt(usize),
+}
+
 /// Try and apply the replacement function on various substrings of input. This is a workaround for
 /// our regex engine not supporting overlapping matches.
-fn replace_overlapping<'t>(
-    input: &'t str,
-    mut replacer: impl FnMut(&str) -> Option<(usize, String)>,
-) -> Cow<'t, str> {
+fn replace_overlapping(
+    input: &str,
+    mut replacer: impl FnMut(&str) -> Option<MatchingAction>,
+) -> Cow<'_, str> {
     let mut input = input.to_owned();
     let mut prefix = String::new();
 
-    while let Some((i, replacement)) = replacer(&input) {
+    while let Some(action) = replacer(&input) {
+        let (i, replacement) = match action {
+            MatchingAction::MatchedAt(i, replacement) => (i, replacement),
+            MatchingAction::EndsAt(i) => {
+                let new_input = &input[..i];
+                if let Some(action) = replacer(&new_input) {
+                    match action {
+                        MatchingAction::MatchedAt(i2, replacement2) => {
+                            (i2, replacement2 + &input[i..])
+                        }
+                        MatchingAction::EndsAt(_) => (0, input),
+                    }
+                } else {
+                    (0, input)
+                }
+            }
+        };
+
         let (add_prefix, new_input) = replacement.split_at(i);
         prefix.push_str(add_prefix);
         input = new_input.to_owned();
@@ -202,62 +224,65 @@ fn replace_overlapping<'t>(
 impl<'a> Replacer<'a> {
     pub fn replace<'t>(&self, input: &'t str, sub: &str) -> Cow<'t, str> {
         replace_overlapping(input, |input| {
-            let mut matched_at = None;
+            let captures = self.regex.captures(input)?;
 
-            let rv = self.regex.replace(input, |captures: &Captures<'_>| {
-                let full_match = captures.get(0).unwrap();
-                matched_at = Some(full_match.start());
-                let match_str = &input[full_match.start()..full_match.end()];
+            let full_match = captures.get(0).unwrap();
+            let match_str = &input[full_match.start()..full_match.end()];
 
-                let mut expr_parens = self
-                    .expr
-                    .tokens
-                    .iter()
-                    .filter_map(Token::as_char)
-                    .peekable();
-                let mut extra_stack = Vec::new();
+            let mut expr_parens = self
+                .expr
+                .tokens
+                .iter()
+                .enumerate()
+                .filter_map(|(i, token)| Some((i == self.expr.tokens.len() - 1, token.as_char()?)))
+                .peekable();
 
-                for c in match_str.chars() {
-                    let (is_open, counterpart) = if let Some(close) = self.pairs.get(&c) {
-                        (true, *close)
-                    } else if let Some(open) = self.reverse_pairs.get(&c) {
-                        (false, *open)
-                    } else {
-                        continue;
-                    };
+            let mut extra_stack = Vec::new();
 
-                    if expr_parens.peek().cloned() == Some(c) {
+            for (i, c) in match_str.char_indices() {
+                let (is_open, counterpart) = if let Some(close) = self.pairs.get(&c) {
+                    (true, *close)
+                } else if let Some(open) = self.reverse_pairs.get(&c) {
+                    (false, *open)
+                } else {
+                    continue;
+                };
+
+                if !is_open && extra_stack.last().cloned() == Some(counterpart) {
+                    extra_stack.pop();
+                    continue;
+                }
+
+                if let Some((is_last_token, c2)) = expr_parens.peek().cloned() {
+                    if c2 == c {
                         expr_parens.next();
+
+                        if is_last_token && match_str.len() > i + 1 {
+                            return Some(MatchingAction::EndsAt(full_match.start() + i + 1));
+                        }
+
                         continue;
                     }
-
-                    if !is_open && extra_stack.last().cloned() == Some(counterpart) {
-                        extra_stack.pop();
-                    } else if is_open || c == counterpart {
-                        extra_stack.push(c);
-                    } else {
-                        return match_str.to_owned();
-                    }
                 }
 
-                if expr_parens.peek().is_some() {
-                    return match_str.to_owned();
+                if is_open || c == counterpart {
+                    extra_stack.push(c);
+                    continue;
                 }
 
-                if !extra_stack.is_empty() {
-                    return match_str.to_owned();
-                }
-
-                let mut rv = String::new();
-                captures.expand(sub, &mut rv);
-                rv
-            });
-
-            if let Some(i) = matched_at {
-                Some((i, rv.into_owned()))
-            } else {
-                None
+                return Some(MatchingAction::MatchedAt(
+                    full_match.start(),
+                    input.to_owned(),
+                ));
             }
+
+            assert!(!(expr_parens.peek().is_some() || !extra_stack.is_empty()));
+
+            let mut rv = input[..full_match.start()].to_owned();
+            captures.expand(sub, &mut rv);
+            rv.push_str(&input[full_match.end()..]);
+
+            Some(MatchingAction::MatchedAt(full_match.start(), rv))
         })
     }
 }
@@ -343,7 +368,7 @@ fn test_nested_expr() {
 macro_rules! replacer_test {
     ($input:expr, $search:expr, $replace:expr, @$output:expr) => {{
         let search = Expr::parse_expr($search).unwrap();
-        let replacer = search.get_replacer().unwrap();
+        let replacer = search.get_replacer(false).unwrap();
         let mut file = $input.to_owned();
 
         println!("running replacer");
@@ -453,4 +478,13 @@ fn test_regression1() {
     }
     "###
     );
+}
+
+#[test]
+fn test_regression_extra_parens() {
+    let file = r#"pytestmark = pytest.mark.skip(reason="foobar") ; def foo(): pass"#;
+    let search = r"pytestmark\s*=\s*pytest.mark.skip ( .* )";
+    let replace = "";
+
+    replacer_test!( file, search, replace, @" ; def foo(): pass");
 }
