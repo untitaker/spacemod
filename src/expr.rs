@@ -176,8 +176,8 @@ pub struct Replacer<'a> {
 }
 
 enum MatchingAction {
-    MatchedAt(usize, String),
-    EndsAt(usize),
+    ContinueAt(usize, String),
+    RetrySubstring(usize, usize),
 }
 
 /// Try and apply the replacement function on various substrings of input. This is a workaround for
@@ -191,18 +191,18 @@ fn replace_overlapping(
 
     while let Some(action) = replacer(&input) {
         let (i, replacement) = match action {
-            MatchingAction::MatchedAt(i, replacement) => (i, replacement),
-            MatchingAction::EndsAt(i) => {
-                let new_input = &input[..i];
+            MatchingAction::ContinueAt(i, replacement) => (i, replacement),
+            MatchingAction::RetrySubstring(start, end) => {
+                let new_input = &input[..end];
                 if let Some(action) = replacer(&new_input) {
                     match action {
-                        MatchingAction::MatchedAt(i2, replacement2) => {
-                            (i2, replacement2 + &input[i..])
+                        MatchingAction::ContinueAt(i2, replacement2) => {
+                            (i2, replacement2 + &input[end..])
                         }
-                        MatchingAction::EndsAt(_) => (0, input),
+                        MatchingAction::RetrySubstring(start, _) => (start, input),
                     }
                 } else {
-                    (0, input)
+                    (start, input)
                 }
             }
         };
@@ -260,7 +260,10 @@ impl<'a> Replacer<'a> {
                         expr_parens.next();
 
                         if is_last_token && match_str.len() > i + 1 {
-                            return Some(MatchingAction::EndsAt(full_match.start() + i + 1));
+                            return Some(MatchingAction::RetrySubstring(
+                                full_match.start(),
+                                full_match.start() + i + 1,
+                            ));
                         }
 
                         continue;
@@ -272,14 +275,14 @@ impl<'a> Replacer<'a> {
                     continue;
                 }
 
-                return Some(MatchingAction::MatchedAt(
+                return Some(MatchingAction::ContinueAt(
                     full_match.start(),
                     input.to_owned(),
                 ));
             }
 
             if !extra_stack.is_empty() || expr_parens.peek().is_some() {
-                return Some(MatchingAction::MatchedAt(
+                return Some(MatchingAction::ContinueAt(
                     full_match.start(),
                     input.to_owned(),
                 ));
@@ -289,7 +292,7 @@ impl<'a> Replacer<'a> {
             captures.expand(sub, &mut rv);
             rv.push_str(&input[full_match.end()..]);
 
-            Some(MatchingAction::MatchedAt(full_match.start(), rv))
+            Some(MatchingAction::ContinueAt(rv.len(), rv))
         })
     }
 }
