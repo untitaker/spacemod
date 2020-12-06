@@ -14,7 +14,7 @@ use structopt::StructOpt;
 use expr::Expr;
 
 #[derive(StructOpt)]
-#[structopt(name = "hyperlink")]
+#[structopt(name = "spacemod")]
 struct Cli {
     search: String,
     replace: String,
