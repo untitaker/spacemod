@@ -148,14 +148,14 @@ impl Expr {
                 c => {
                     match tokens.last_mut() {
                         Some(Token::Text(ref mut s)) => {
-                            if escape && c != ' ' {
+                            if escape && c != ' ' && c != '\\' {
                                 s.push('\\');
                             }
                             s.push(c);
                         }
                         x => panic!("Unexpected last token: {:?}", x),
                     }
-                    escape = false;
+                    escape = c == '\\';
                 }
             }
         }
@@ -346,7 +346,7 @@ impl<'a> Replacer<'a> {
 
 #[test]
 fn test_basic_regex() {
-    insta::assert_debug_snapshot!(Expr::parse_expr("foo { [a-zA-Z0-9]+\\ bam } baz", Default::default()), @r###"
+    insta::assert_debug_snapshot!(Expr::parse_expr(r#"foo { [a-zA-Z0-9]+\ bam } baz"#, Default::default()), @r###"
     Ok(
         Expr {
             tokens: [
@@ -359,6 +359,35 @@ fn test_basic_regex() {
                 ),
                 Text(
                     "[a-zA-Z0-9]+ bam",
+                ),
+                Close(
+                    '{',
+                    '}',
+                ),
+                Text(
+                    "baz",
+                ),
+            ],
+        },
+    )
+    "###);
+}
+
+#[test]
+fn test_basic_regex_with_backslash() {
+    insta::assert_debug_snapshot!(Expr::parse_expr(r#"foo { [a-zA-Z0-9]+\\ bam } baz"#, Default::default()), @r###"
+    Ok(
+        Expr {
+            tokens: [
+                Text(
+                    "foo",
+                ),
+                Open(
+                    '{',
+                    '}',
+                ),
+                Text(
+                    "[a-zA-Z0-9]+\\ bam",
                 ),
                 Close(
                     '{',
