@@ -3,19 +3,10 @@ use std::collections::BTreeMap;
 
 use regex::{Regex, RegexBuilder};
 
-use pest::error::Error;
-use pest::iterators::Pair;
-use pest::Parser;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ParseError {
-    #[error("{0}")]
-    Pest(#[from] Error<parser::Rule>),
-
-    #[error("expected expression, found {0:?}")]
-    ExpectedExpression(parser::Rule),
-
     #[error("{0}")]
     Regex(#[from] regex::Error),
 
@@ -25,14 +16,12 @@ pub enum ParseError {
         close: char,
         close2: char,
     },
-}
 
-mod parser {
-    use pest_derive::Parser;
+    #[error("The -p parameter's value must have an even length.")]
+    InvalidPairsLength,
 
-    #[derive(Parser)]
-    #[grammar = "expr.pest"]
-    pub struct Parser;
+    #[error("Invalid parenthesis: {0}. Use -p option to define parenthesis pair or make sure your regex is longer than 1 character.")]
+    SingleCharacter(char),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -59,9 +48,41 @@ pub struct Expr {
 
 pub type Pairs = BTreeMap<char, char>;
 
+fn default_pairs() -> Pairs {
+    let mut rv = Pairs::new();
+    rv.insert('{', '}');
+    rv.insert('(', ')');
+    rv.insert('[', ']');
+    rv.insert('<', '>');
+    rv.insert('\'', '\'');
+    rv.insert('`', '`');
+    rv.insert('"', '"');
+    rv
+}
+
+pub fn parse_pairs(input: &str) -> Result<Pairs, ParseError> {
+    let mut char_iter = input.chars();
+    let mut rv = Pairs::new();
+
+    while let Some(open) = char_iter.next() {
+        let close = char_iter.next().ok_or(ParseError::InvalidPairsLength)?;
+        if let Some(close2) = rv.insert(open, close) {
+            if close2 != close {
+                return Err(ParseError::MismatchedParenthesis {
+                    open,
+                    close,
+                    close2,
+                });
+            }
+        }
+    }
+
+    Ok(rv)
+}
+
 impl Expr {
-    pub fn get_parenthesis_pairs(&self) -> Result<Pairs, ParseError> {
-        let mut rv = BTreeMap::new();
+    pub fn get_used_pairs(&self, user_defined_pairs: Pairs) -> Result<Pairs, ParseError> {
+        let mut rv = user_defined_pairs;
 
         for token in &self.tokens {
             if let Token::Open(open, close) = token {
@@ -82,47 +103,64 @@ impl Expr {
         Ok(rv)
     }
 
-    pub fn parse_expr(input: &str) -> Result<Self, ParseError> {
-        use parser::Rule;
+    pub fn parse_expr(input: &str, user_defined_pairs: Pairs) -> Result<Self, ParseError> {
+        let pairs = {
+            let mut rv = default_pairs();
+            rv.extend(user_defined_pairs);
+            rv
+        };
 
-        fn handle_expr(pair: Pair<Rule>, tokens: &mut Vec<Token>) -> Result<(), ParseError> {
-            match pair.as_rule() {
-                Rule::Parens => {
-                    let mut inner = pair.into_inner();
-                    let open = inner.next().unwrap().as_str().chars().next().unwrap();
-                    let mut child_tokens = Vec::new();
-                    for child in inner.next().unwrap().into_inner() {
-                        handle_expr(child, &mut child_tokens)?;
-                    }
-                    let close = inner.next().unwrap().as_str().chars().next().unwrap();
-                    debug_assert!(inner.next().is_none());
+        let mut tokens = vec![Token::Text(String::new())];
+        let mut parens_stack = Vec::new();
+        let mut escape = false;
 
-                    tokens.push(Token::Open(open, close));
-                    tokens.extend(child_tokens);
-                    tokens.push(Token::Close(open, close));
-                    Ok(())
+        let mut finish_token = |tokens: &mut Vec<Token>| -> Result<(), ParseError> {
+            let token = tokens.last_mut().unwrap();
+            let c = match token {
+                Token::Text(s) if s.len() == 1 => s.chars().next(),
+                _ => None,
+            };
+
+            if let Some(c) = c {
+                if let Some(close) = pairs.get(&c) {
+                    parens_stack.push(c);
+                    *token = Token::Open(c, *close);
+                } else if parens_stack.last().and_then(|open| pairs.get(open)) == Some(&c) {
+                    *token = Token::Close(parens_stack.pop().unwrap(), c);
+                } else {
+                    // To make the grammar simpler we force you to define any single-character
+                    // "word" as parenthesis. This is rather inconvenient but should make debugging
+                    // unexpected behavior easier.
+                    return Err(ParseError::SingleCharacter(c));
                 }
-                Rule::Regex => {
-                    let mut regex = String::new();
-                    for token in pair.into_inner() {
-                        regex.push_str(token.as_str());
+            }
+
+            Ok(())
+        };
+
+        for c in input.chars() {
+            match c {
+                '\\' if !escape => escape = true,
+                ' ' if !escape => {
+                    finish_token(&mut tokens)?;
+                    tokens.push(Token::Text(String::new()));
+                }
+                c => {
+                    match tokens.last_mut() {
+                        Some(Token::Text(ref mut s)) => {
+                            if escape && c != ' ' {
+                                s.push('\\');
+                            }
+                            s.push(c);
+                        }
+                        x => panic!("Unexpected last token: {:?}", x),
                     }
-                    tokens.push(Token::Text(regex));
-                    Ok(())
+                    escape = false;
                 }
-                rule => Err(ParseError::ExpectedExpression(rule)),
             }
         }
 
-        let mut tokens = Vec::new();
-
-        for pair in parser::Parser::parse(parser::Rule::Input, input)?
-            .next()
-            .unwrap()
-            .into_inner()
-        {
-            handle_expr(pair, &mut tokens)?;
-        }
+        finish_token(&mut tokens)?;
 
         Ok(Expr { tokens })
     }
@@ -149,8 +187,12 @@ impl Expr {
         rv
     }
 
-    pub fn get_replacer(&self, multiline: bool) -> Result<Replacer<'_>, ParseError> {
-        let pairs = self.get_parenthesis_pairs()?;
+    pub fn get_replacer(
+        &self,
+        multiline: bool,
+        user_defined_pairs: Pairs,
+    ) -> Result<Replacer<'_>, ParseError> {
+        let pairs = self.get_used_pairs(user_defined_pairs)?;
         let regex_string = self.regex_string();
         let regex = RegexBuilder::new(&regex_string)
             .multi_line(!pairs.is_empty() || multiline)
@@ -304,7 +346,7 @@ impl<'a> Replacer<'a> {
 
 #[test]
 fn test_basic_regex() {
-    insta::assert_debug_snapshot!(Expr::parse_expr("foo { [a-zA-Z0-9]+\\ bam } baz"), @r###"
+    insta::assert_debug_snapshot!(Expr::parse_expr("foo { [a-zA-Z0-9]+\\ bam } baz", Default::default()), @r###"
     Ok(
         Expr {
             tokens: [
@@ -333,7 +375,7 @@ fn test_basic_regex() {
 
 #[test]
 fn test_nested_expr() {
-    insta::assert_debug_snapshot!(Expr::parse_expr("foo { { bam } bar { baz } }"), @r###"
+    insta::assert_debug_snapshot!(Expr::parse_expr("foo { { bam } bar { baz } }", Default::default()), @r###"
     Ok(
         Expr {
             tokens: [
@@ -382,8 +424,8 @@ fn test_nested_expr() {
 #[cfg(test)]
 macro_rules! replacer_test {
     ($input:expr, $search:expr, $replace:expr, @$output:expr) => {{
-        let search = Expr::parse_expr($search).unwrap();
-        let replacer = search.get_replacer(false).unwrap();
+        let search = Expr::parse_expr($search, Default::default()).unwrap();
+        let replacer = search.get_replacer(false, Default::default()).unwrap();
         let mut file = $input.to_owned();
 
         println!("running replacer");

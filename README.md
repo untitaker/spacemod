@@ -72,19 +72,20 @@ A token can either be a parenthesis/quote, or a substring of a regex:
 ```
 
 If you need to use a literal space anywhere in a regex substring, escape it as
-`\ `. That also means escaping a regex like `\ ` as `\\ `.
+`\ `. That also means escaping a regex like `\ ` as `\\ `. Backslashes followed
+by anything but a space within a regex do not need to be escaped.
 
-`spacemod` hardcodes support for the following parenthesis/quotes:
+`spacemod` knows the following parenthesis/quotes:
 
 * `{}`
 * `[]`
 * `()`
-* `""` and `''`. Since start and end are the same, this basically
+* `<>`
+* `""`, ```` and `''`. Since start and end are the same, this basically
   devolves into asserting there is an even number of tokens.
 
-Currently this list cannot be extended, but perhaps in the future.
-
-Take a look at [the grammar definition](src/expr.pest) for detailed information.
+You can extend this list with `-p ab` where `a` is the opening parenthesis, and
+`b` the closing counterpart. See `--help` for more information.
 
 ## License
 

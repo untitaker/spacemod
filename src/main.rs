@@ -11,7 +11,7 @@ use thiserror::Error;
 
 use structopt::StructOpt;
 
-use expr::Expr;
+use expr::{parse_pairs, Expr};
 
 #[derive(StructOpt)]
 #[structopt(name = "spacemod")]
@@ -29,9 +29,22 @@ struct Cli {
     /// Automatically accept all changes (use with caution).
     #[structopt(long = "accept-all")]
     accept_all: bool,
-    /// A comma-delimited list of file extensions to process.
-    #[structopt(short = "e", long = "extensions")]
+    /// A list of file extensions to process. Either comma-delimited or by passing the option
+    /// multiple times.
+    #[structopt(short = "e", long = "extensions", use_delimiter(true))]
     extensions: Vec<String>,
+    /// A set of parenthesis to support in addition to the defaults. This option is necessary for
+    /// spacemod to understand that ')' is the counterpart to '(', for example.
+    ///
+    /// By default the value is:
+    ///
+    ///     -p "{}()[]<>''"
+    ///     -p '``""'
+    ///
+    /// Specifying this option will append to that list. The option can be specified multiple
+    /// times.
+    #[structopt(short = "p", long = "pairs")]
+    pairs: Vec<String>,
 }
 
 #[derive(Copy, Clone)]
@@ -76,11 +89,14 @@ fn main() -> Result<(), Error> {
         extensions,
         file_or_dir,
         multiline,
+        pairs,
     } = Cli::from_args();
     let term = console::Term::stdout();
 
-    let expr = Expr::parse_expr(&search).context("failed to parse search string")?;
-    let replacer = expr.get_replacer(multiline)?;
+    let user_defined_pairs = parse_pairs(&pairs.concat())?;
+    let expr = Expr::parse_expr(&search, user_defined_pairs.clone())
+        .context("failed to parse search string")?;
+    let replacer = expr.get_replacer(multiline, user_defined_pairs)?;
 
     let mut walk_builder = if file_or_dir.is_empty() {
         ignore::WalkBuilder::new(".")
