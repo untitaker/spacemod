@@ -81,7 +81,7 @@ by anything but a space within a regex do not need to be escaped.
 * `[]`
 * `()`
 * `<>`
-* `""`, ```` and `''`. Since start and end are the same, this basically
+* `"", ``, ''`. Since start and end are the same, this basically
   devolves into asserting there is an even number of tokens.
 
 You can extend this list with `-p ab` where `a` is the opening parenthesis, and
