@@ -16,9 +16,15 @@ use expr::{parse_pairs, Expr};
 #[derive(StructOpt)]
 #[structopt(name = "spacemod")]
 struct Cli {
+    /// The pattern to search for.
     search: String,
+    /// The string to replace it with.
+    ///
+    /// Capture groups such as `(.*)` can be addressed with $0, $1,
+    /// $2, ...  where $0 refers to the entire match.
     replace: String,
 
+    /// Optionally, a file or directory to modify instead of `./`
     file_or_dir: Vec<PathBuf>,
 
     /// Have regex work over multiple lines.
