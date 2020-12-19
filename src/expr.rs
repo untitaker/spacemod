@@ -208,9 +208,11 @@ pub struct Replacer<'a> {
 }
 
 enum MatchingAction {
-    /// Common case: replacer fn did all possible replacements for input ($1),
-    /// `replace_overlapping` should chop off $0 bytes from input and continue.
-    ContinueAt(usize, String),
+    /// One match has been replaced.
+    Replaced(String),
+    /// A match has been found, but the parenthesis are mismatching. `replace_overlapping` should
+    /// chop off $0 bytes from input and continue.
+    JumpForward(usize),
     /// The replacer fn found a potential match but consumed all parenthesis of the expr before the
     /// capture group ended. The procedure is retried (once) using the provided range:
     /// `&input[$0..$1]`
@@ -227,24 +229,30 @@ fn replace_overlapping(
     let mut prefix = String::new();
 
     while let Some(action) = replacer(&input) {
-        let (i, replacement) = match action {
-            MatchingAction::ContinueAt(i, replacement) => (i, replacement),
+        let i = match action {
+            MatchingAction::Replaced(replacement) => {
+                input = replacement;
+                break;
+            }
+            MatchingAction::JumpForward(i) => i,
             MatchingAction::RetrySubstring(start, end) => {
                 let new_input = &input[..end];
                 if let Some(action) = replacer(&new_input) {
                     match action {
-                        MatchingAction::ContinueAt(i2, replacement2) => {
-                            (i2, replacement2 + &input[end..])
+                        MatchingAction::Replaced(replacement2) => {
+                            input = replacement2 + &input[end..];
+                            break;
                         }
-                        MatchingAction::RetrySubstring(start, _) => (start, input),
+                        MatchingAction::JumpForward(i2) => i2,
+                        MatchingAction::RetrySubstring(start, _) => start,
                     }
                 } else {
-                    (start, input)
+                    start
                 }
             }
         };
 
-        let (add_prefix, new_input) = replacement.split_at(i);
+        let (add_prefix, new_input) = input.split_at(i);
         prefix.push_str(add_prefix);
         input = new_input.to_owned();
 
@@ -312,24 +320,18 @@ impl<'a> Replacer<'a> {
                     continue;
                 }
 
-                return Some(MatchingAction::ContinueAt(
-                    full_match.start(),
-                    input.to_owned(),
-                ));
+                return Some(MatchingAction::JumpForward(full_match.start()));
             }
 
             if !extra_stack.is_empty() || expr_parens.peek().is_some() {
-                return Some(MatchingAction::ContinueAt(
-                    full_match.start(),
-                    input.to_owned(),
-                ));
+                return Some(MatchingAction::JumpForward(full_match.start()));
             }
 
             let mut rv = input[..full_match.start()].to_owned();
             captures.expand(sub, &mut rv);
             rv.push_str(&input[full_match.end()..]);
 
-            Some(MatchingAction::ContinueAt(rv.len(), rv))
+            Some(MatchingAction::Replaced(rv))
         })
     }
 }
@@ -442,14 +444,18 @@ fn test_nested_expr() {
 
 #[cfg(test)]
 macro_rules! replacer_test {
-    ($input:expr, $search:expr, $replace:expr, @$output:expr) => {{
+    ($input:expr, $search:expr, $replace:expr, @$output:expr, $steps:expr) => {{
         let search = Expr::parse_expr($search, Default::default()).unwrap();
         let replacer = search.get_replacer(false, Default::default()).unwrap();
         let mut file = $input.to_owned();
 
         println!("running replacer");
 
+        let mut steps = 0;
+
         loop {
+            assert!(steps < 10);
+            steps += 1;
             let new_file = replacer.replace(&*file, $replace);
             if new_file == file {
                 break;
@@ -457,6 +463,8 @@ macro_rules! replacer_test {
 
             file = new_file.into_owned();
         }
+
+        assert_eq!(steps, $steps);
 
         insta::assert_snapshot!(
             file,
@@ -467,12 +475,12 @@ macro_rules! replacer_test {
 
 #[test]
 fn test_simple_string() {
-    replacer_test!("foo { bar }", "foo", "xxx", @"xxx { bar }");
+    replacer_test!("foo { bar }", "foo", "xxx", @"xxx { bar }", 2);
 }
 
 #[test]
 fn test_basic() {
-    replacer_test!("foo { bar }", "foo { bar }", "xxx", @"xxx");
+    replacer_test!("foo { bar }", "foo { bar }", "xxx", @"xxx", 2);
 }
 
 #[test]
@@ -499,7 +507,7 @@ fn test_relay_code() {
                 Some(outdir) => outdir,
             };
         }
-"###
+"###, 2
     );
 }
 
@@ -510,7 +518,8 @@ fn test_example_good() {
     let replace = r#"String::from("$1")"#;
     replacer_test!(
         file, search, replace,
-        @r###"vec![String::from("foo"), String::from("bar"), String::from("baz")]"###
+        @r###"vec![String::from("foo"), String::from("bar"), String::from("baz")]"###,
+        4
     );
 }
 
@@ -521,7 +530,8 @@ fn test_example_bad() {
     let replace = r#"String::from("$1")"#;
     replacer_test!(
         file, search, replace,
-        @r###"vec![String::from(String::from(String::from("foo"), "bar"), "baz")]"###
+        @r###"vec![String::from(String::from(String::from("foo"), "bar"), "baz")]"###,
+        4
     );
 }
 
@@ -531,7 +541,7 @@ fn test_no_match() {
     let search = "hello";
     let replace = "oh no";
 
-    replacer_test!(file, search, replace, @"foo bar baz");
+    replacer_test!(file, search, replace, @"foo bar baz", 1);
 }
 
 #[test]
@@ -552,7 +562,7 @@ fn test_regression1() {
         self.0.push(String::from("before_process_child_values"));
         self.0.push(String::from("after_process_child_values"));
     }
-    "###
+    "###, 3
     );
 }
 
@@ -562,7 +572,7 @@ fn test_regression_extra_parens() {
     let search = r"pytestmark\s*=\s*pytest.mark.skip ( .* )";
     let replace = "";
 
-    replacer_test!( file, search, replace, @" ; def foo(): pass");
+    replacer_test!( file, search, replace, @" ; def foo(): pass", 2);
 }
 
 #[test]
@@ -581,7 +591,7 @@ map.insert("###;
     Foo(Bar(Baz(String::from("foo")))),
     );
     map.insert(
-    "###);
+    "###, 2);
 }
 
 #[test]
@@ -595,7 +605,7 @@ fn test_remaining_expr_parens() {
     replacer_test!(file, search, replace, @r###"
     // "foo"
     (String::from("some"))
-    "###);
+    "###, 2);
 }
 
 #[test]
@@ -605,7 +615,7 @@ fn test_nested_parens() {
     let search = r#"str ( uuid.uuid4 ( ) )"#;
     let replace = r#"uuid.uuid4().hex"#;
 
-    replacer_test!(file, search, replace, @"uuid.uuid4().hex");
+    replacer_test!(file, search, replace, @"uuid.uuid4().hex", 2);
 }
 
 #[test]
@@ -615,7 +625,7 @@ fn test_regex_and_regular_parens() {
     let search = r#"str\( uuid.uuid4 ( ) \);"#;
     let replace = r#"uuid.uuid4().hex;"#;
 
-    replacer_test!(file, search, replace, @"uuid.uuid4().hex;");
+    replacer_test!(file, search, replace, @"uuid.uuid4().hex;", 2);
 }
 
 #[test]
@@ -625,7 +635,7 @@ fn test_regex_and_regular_parens2() {
     let search = r#"str ( uuid.uuid4\(\) )"#;
     let replace = r#"uuid.uuid4().hex"#;
 
-    replacer_test!(file, search, replace, @"uuid.uuid4().hex");
+    replacer_test!(file, search, replace, @"uuid.uuid4().hex", 2);
 }
 
 #[test]
@@ -635,7 +645,7 @@ fn test_regex_and_regular_parens3() {
     let search = r#"str\{ uuid.uuid4 ( ) \};"#;
     let replace = r#"uuid.uuid4().hex;"#;
 
-    replacer_test!(file, search, replace, @"uuid.uuid4().hex;");
+    replacer_test!(file, search, replace, @"uuid.uuid4().hex;", 2);
 }
 
 #[test]
@@ -645,7 +655,7 @@ fn test_regex_and_regular_parens4() {
     let search = r#"str { uuid.uuid4\(\) }"#;
     let replace = r#"uuid.uuid4().hex"#;
 
-    replacer_test!(file, search, replace, @"uuid.uuid4().hex");
+    replacer_test!(file, search, replace, @"uuid.uuid4().hex", 2);
 }
 
 #[test]
