@@ -19,9 +19,6 @@ pub enum ParseError {
 
     #[error("The -p parameter's value must have an even length.")]
     InvalidPairsLength,
-
-    #[error("Invalid parenthesis: {0}. Use -p option to define parenthesis pair or make sure your regex is longer than 1 character.")]
-    SingleCharacter(char),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -117,22 +114,15 @@ impl Expr {
         let mut finish_token = |tokens: &mut Vec<Token>| -> Result<(), ParseError> {
             let token = tokens.last_mut().unwrap();
             let c = match token {
-                Token::Text(s) if s.len() == 1 => s.chars().next(),
-                _ => None,
+                Token::Text(s) if s.len() == 1 => s.chars().next().unwrap(),
+                _ => return Ok(()),
             };
 
-            if let Some(c) = c {
-                if let Some(close) = pairs.get(&c) {
-                    parens_stack.push(c);
-                    *token = Token::Open(c, *close);
-                } else if parens_stack.last().and_then(|open| pairs.get(open)) == Some(&c) {
-                    *token = Token::Close(parens_stack.pop().unwrap(), c);
-                } else {
-                    // To make the grammar simpler we force you to define any single-character
-                    // "word" as parenthesis. This is rather inconvenient but should make debugging
-                    // unexpected behavior easier.
-                    return Err(ParseError::SingleCharacter(c));
-                }
+            if let Some(close) = pairs.get(&c) {
+                parens_stack.push(c);
+                *token = Token::Open(c, *close);
+            } else if parens_stack.last().and_then(|open| pairs.get(open)) == Some(&c) {
+                *token = Token::Close(parens_stack.pop().unwrap(), c);
             }
 
             Ok(())
@@ -656,4 +646,47 @@ fn test_regex_and_regular_parens4() {
     let replace = r#"uuid.uuid4().hex"#;
 
     replacer_test!(file, search, replace, @"uuid.uuid4().hex");
+}
+
+#[test]
+fn test_commas() {
+    insta::assert_debug_snapshot!(Expr::parse_expr(r#""request_data": json.dumps ( { "options": self.options } ) ,"#, Default::default()), @r###"
+    Ok(
+        Expr {
+            tokens: [
+                Text(
+                    "\"request_data\":",
+                ),
+                Text(
+                    "json.dumps",
+                ),
+                Open(
+                    '(',
+                    ')',
+                ),
+                Open(
+                    '{',
+                    '}',
+                ),
+                Text(
+                    "\"options\":",
+                ),
+                Text(
+                    "self.options",
+                ),
+                Close(
+                    '{',
+                    '}',
+                ),
+                Close(
+                    '(',
+                    ')',
+                ),
+                Text(
+                    ",",
+                ),
+            ],
+        },
+    )
+    "###);
 }
