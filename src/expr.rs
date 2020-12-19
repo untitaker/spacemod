@@ -131,9 +131,12 @@ impl Expr {
         for c in input.chars() {
             match c {
                 '\\' if !escape => escape = true,
-                ' ' if !escape => {
+                '\n' | '\t' | ' ' if !escape => {
                     finish_token(&mut tokens)?;
-                    tokens.push(Token::Text(String::new()));
+                    match tokens.last() {
+                        Some(Token::Text(s)) if s.is_empty() => (),
+                        _ => tokens.push(Token::Text(String::new())),
+                    }
                 }
                 c => {
                     match tokens.last_mut() {
@@ -694,6 +697,37 @@ fn test_commas() {
                 ),
                 Text(
                     ",",
+                ),
+            ],
+        },
+    )
+    "###);
+}
+
+#[test]
+fn test_multi_whitespace() {
+    insta::assert_debug_snapshot!(Expr::parse_expr("{ \t\n{ foo } }", Default::default()), @r###"
+    Ok(
+        Expr {
+            tokens: [
+                Open(
+                    '{',
+                    '}',
+                ),
+                Open(
+                    '{',
+                    '}',
+                ),
+                Text(
+                    "foo",
+                ),
+                Close(
+                    '{',
+                    '}',
+                ),
+                Close(
+                    '{',
+                    '}',
                 ),
             ],
         },
