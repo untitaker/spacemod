@@ -118,11 +118,11 @@ impl Expr {
                 _ => return Ok(()),
             };
 
-            if let Some(close) = pairs.get(&c) {
+            if parens_stack.last().and_then(|open| pairs.get(open)) == Some(&c) {
+                *token = Token::Close(parens_stack.pop().unwrap(), c);
+            } else if let Some(close) = pairs.get(&c) {
                 parens_stack.push(c);
                 *token = Token::Open(c, *close);
-            } else if parens_stack.last().and_then(|open| pairs.get(open)) == Some(&c) {
-                *token = Token::Close(parens_stack.pop().unwrap(), c);
             }
 
             Ok(())
@@ -728,6 +728,43 @@ fn test_multi_whitespace() {
                 Close(
                     '{',
                     '}',
+                ),
+            ],
+        },
+    )
+    "###);
+}
+
+#[test]
+fn test_regression_parens() {
+    insta::assert_debug_snapshot!(Expr::parse_expr(r#"self.create_user ( " (.*) " (.*) )"#, Default::default()), @r###"
+    Ok(
+        Expr {
+            tokens: [
+                Text(
+                    "self.create_user",
+                ),
+                Open(
+                    '(',
+                    ')',
+                ),
+                Open(
+                    '\"',
+                    '\"',
+                ),
+                Text(
+                    "(.*)",
+                ),
+                Close(
+                    '\"',
+                    '\"',
+                ),
+                Text(
+                    "(.*)",
+                ),
+                Close(
+                    '(',
+                    ')',
                 ),
             ],
         },
