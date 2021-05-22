@@ -44,8 +44,13 @@ struct Cli {
     ///
     /// By default the value is:
     ///
-    ///     -p "{}()[]<>''"
-    ///     -p '``""'
+    ///     -p "{ }"
+    ///     -p "( )"
+    ///     -p "[ ]"
+    ///     -p "< >"
+    ///     -p "' '"
+    ///     -p '` `'
+    ///     -p '" "'
     ///
     /// Specifying this option will append to that list. The option can be specified multiple
     /// times.
@@ -99,7 +104,7 @@ fn main() -> Result<(), Error> {
     } = Cli::from_args();
     let term = console::Term::stdout();
 
-    let user_defined_pairs = parse_pairs(&pairs.concat())?;
+    let user_defined_pairs = parse_pairs(&pairs)?;
     let expr = Expr::parse_expr(&search, user_defined_pairs.clone())
         .context("failed to parse search string")?;
     let replacer = expr.get_replacer(multiline, user_defined_pairs)?;

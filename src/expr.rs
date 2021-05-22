@@ -1,7 +1,8 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use regex::{Regex, RegexBuilder};
+use itertools::Itertools;
+use regex::{escape, Regex, RegexBuilder};
 
 use thiserror::Error;
 
@@ -12,28 +13,28 @@ pub enum ParseError {
 
     #[error("parenthesis {open:?} is matched once with {close:?}, once with {close2:?}. This creates ambiguities when parsing files.")]
     MismatchedParenthesis {
-        open: char,
-        close: char,
-        close2: char,
+        open: String,
+        close: String,
+        close2: String,
     },
 
-    #[error("The -p parameter's value must have an even length.")]
+    #[error("The -p parameter's value must contain one space that delimits the open and closing tag. For example, '( )' or '<a> </a>'.")]
     InvalidPairsLength,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Token {
     Text(String),
-    Open(char, char),
-    Close(char, char),
+    Open(String, String),
+    Close(String, String),
 }
 
 impl Token {
-    fn as_char(&self) -> Option<char> {
+    fn as_parenthesis(&self) -> Option<&str> {
         match self {
             Token::Text(_) => None,
-            Token::Open(open, _) => Some(*open),
-            Token::Close(_, close) => Some(*close),
+            Token::Open(open, _) => Some(open),
+            Token::Close(_, close) => Some(close),
         }
     }
 }
@@ -43,31 +44,33 @@ pub struct Expr {
     tokens: Vec<Token>,
 }
 
-pub type Pairs = BTreeMap<char, char>;
+pub type Pairs = BTreeMap<String, String>;
 
 fn default_pairs() -> Pairs {
     let mut rv = Pairs::new();
-    rv.insert('{', '}');
-    rv.insert('(', ')');
-    rv.insert('[', ']');
-    rv.insert('<', '>');
-    rv.insert('\'', '\'');
-    rv.insert('`', '`');
-    rv.insert('"', '"');
+    rv.insert("{".to_owned(), "}".to_owned());
+    rv.insert("(".to_owned(), ")".to_owned());
+    rv.insert("[".to_owned(), "]".to_owned());
+    rv.insert("<".to_owned(), ">".to_owned());
+    rv.insert("\"".to_owned(), "\"".to_owned());
+    rv.insert("`".to_owned(), "`".to_owned());
+    rv.insert("\"".to_owned(), "\"".to_owned());
     rv
 }
 
-pub fn parse_pairs(input: &str) -> Result<Pairs, ParseError> {
-    let mut char_iter = input.chars();
+pub fn parse_pairs(input: &[String]) -> Result<Pairs, ParseError> {
     let mut rv = Pairs::new();
 
-    while let Some(open) = char_iter.next() {
-        let close = char_iter.next().ok_or(ParseError::InvalidPairsLength)?;
-        if let Some(close2) = rv.insert(open, close) {
+    for pair in input {
+        let (open, close) = pair
+            .split(' ')
+            .collect_tuple()
+            .ok_or(ParseError::InvalidPairsLength)?;
+        if let Some(close2) = rv.insert(open.to_owned(), close.to_owned()) {
             if close2 != close {
                 return Err(ParseError::MismatchedParenthesis {
-                    open,
-                    close,
+                    open: open.to_owned(),
+                    close: close.to_owned(),
                     close2,
                 });
             }
@@ -83,13 +86,11 @@ impl Expr {
 
         for token in &self.tokens {
             if let Token::Open(open, close) = token {
-                let open = *open;
-                let close = *close;
-                if let Some(close2) = rv.insert(open, close) {
-                    if close2 != close {
+                if let Some(close2) = rv.insert(open.clone(), close.clone()) {
+                    if &close2 != close {
                         return Err(ParseError::MismatchedParenthesis {
-                            open,
-                            close,
+                            open: open.clone(),
+                            close: close.clone(),
                             close2,
                         });
                     }
@@ -113,16 +114,14 @@ impl Expr {
 
         let mut finish_token = |tokens: &mut Vec<Token>| -> Result<(), ParseError> {
             let token = tokens.last_mut().unwrap();
-            let c = match token {
-                Token::Text(s) if s.len() == 1 => s.chars().next().unwrap(),
-                _ => return Ok(()),
-            };
 
-            if parens_stack.last().and_then(|open| pairs.get(open)) == Some(&c) {
-                *token = Token::Close(parens_stack.pop().unwrap(), c);
-            } else if let Some(close) = pairs.get(&c) {
-                parens_stack.push(c);
-                *token = Token::Open(c, *close);
+            if let Token::Text(c) = token {
+                if parens_stack.last().and_then(|open| pairs.get(open)) == Some(&c) {
+                    *token = Token::Close(parens_stack.pop().unwrap(), c.clone());
+                } else if let Some(close) = pairs.get(&*c) {
+                    parens_stack.push(c.clone());
+                    *token = Token::Open(c.clone(), close.clone());
+                }
             }
 
             Ok(())
@@ -192,13 +191,23 @@ impl Expr {
             .dot_matches_new_line(!pairs.is_empty())
             .build()?;
 
-        let reverse_pairs = pairs.iter().map(|(a, b)| (*b, *a)).collect();
+        let reverse_pairs = pairs.iter().map(|(a, b)| (b.clone(), a.clone())).collect();
+        let pairs_re = RegexBuilder::new(&format!(
+            "({})",
+            pairs
+                .iter()
+                .map(|(a, b)| format!("{}|{}", escape(a), escape(b)))
+                .join("|")
+        ))
+        .multi_line(true)
+        .build()?;
 
         Ok(Replacer {
             expr: self,
             regex,
             pairs,
             reverse_pairs,
+            pairs_re,
         })
     }
 }
@@ -208,6 +217,7 @@ pub struct Replacer<'a> {
     regex: Regex,
     pairs: Pairs,
     reverse_pairs: Pairs,
+    pairs_re: Regex,
 }
 
 enum MatchingAction {
@@ -284,21 +294,26 @@ impl<'a> Replacer<'a> {
                 .tokens
                 .iter()
                 .enumerate()
-                .filter_map(|(i, token)| Some((i == self.expr.tokens.len() - 1, token.as_char()?)))
+                .filter_map(|(i, token)| {
+                    Some((i == self.expr.tokens.len() - 1, token.as_parenthesis()?))
+                })
                 .peekable();
 
             let mut extra_stack = Vec::new();
 
-            for (i, c) in match_str.char_indices() {
-                let (is_open, counterpart) = if let Some(close) = self.pairs.get(&c) {
-                    (true, *close)
-                } else if let Some(open) = self.reverse_pairs.get(&c) {
-                    (false, *open)
+            for re_match in self.pairs_re.find_iter(match_str) {
+                let i = re_match.end();
+                let c = re_match.as_str();
+
+                let (is_open, counterpart) = if let Some(close) = self.pairs.get(c) {
+                    (true, close.clone())
+                } else if let Some(open) = self.reverse_pairs.get(c) {
+                    (false, open.clone())
                 } else {
                     continue;
                 };
 
-                if !is_open && extra_stack.last().cloned() == Some(counterpart) {
+                if !is_open && extra_stack.last() == Some(&counterpart) {
                     extra_stack.pop();
                     continue;
                 }
@@ -310,7 +325,7 @@ impl<'a> Replacer<'a> {
                         if is_last_token && match_str.len() > i + 1 {
                             return Some(MatchingAction::RetrySubstring(
                                 full_match.start(),
-                                full_match.start() + i + 1,
+                                full_match.start() + i,
                             ));
                         }
 
@@ -319,7 +334,7 @@ impl<'a> Replacer<'a> {
                 }
 
                 if is_open || c == counterpart {
-                    extra_stack.push(c);
+                    extra_stack.push(c.to_owned());
                     continue;
                 }
 
@@ -349,15 +364,15 @@ fn test_basic_regex() {
                     "foo",
                 ),
                 Open(
-                    '{',
-                    '}',
+                    "{",
+                    "}",
                 ),
                 Text(
                     "[a-zA-Z0-9]+ bam",
                 ),
                 Close(
-                    '{',
-                    '}',
+                    "{",
+                    "}",
                 ),
                 Text(
                     "baz",
@@ -378,15 +393,15 @@ fn test_basic_regex_with_backslash() {
                     "foo",
                 ),
                 Open(
-                    '{',
-                    '}',
+                    "{",
+                    "}",
                 ),
                 Text(
                     "[a-zA-Z0-9]+\\ bam",
                 ),
                 Close(
-                    '{',
-                    '}',
+                    "{",
+                    "}",
                 ),
                 Text(
                     "baz",
@@ -407,37 +422,37 @@ fn test_nested_expr() {
                     "foo",
                 ),
                 Open(
-                    '{',
-                    '}',
+                    "{",
+                    "}",
                 ),
                 Open(
-                    '{',
-                    '}',
+                    "{",
+                    "}",
                 ),
                 Text(
                     "bam",
                 ),
                 Close(
-                    '{',
-                    '}',
+                    "{",
+                    "}",
                 ),
                 Text(
                     "bar",
                 ),
                 Open(
-                    '{',
-                    '}',
+                    "{",
+                    "}",
                 ),
                 Text(
                     "baz",
                 ),
                 Close(
-                    '{',
-                    '}',
+                    "{",
+                    "}",
                 ),
                 Close(
-                    '{',
-                    '}',
+                    "{",
+                    "}",
                 ),
             ],
         },
@@ -447,9 +462,15 @@ fn test_nested_expr() {
 
 #[cfg(test)]
 macro_rules! replacer_test {
-    ($input:expr, $search:expr, $replace:expr, @$output:expr, $steps:expr) => {{
-        let search = Expr::parse_expr($search, Default::default()).unwrap();
-        let replacer = search.get_replacer(false, Default::default()).unwrap();
+    ($input:expr, $search:expr, $replace:expr, @$output:expr, $steps:expr $(, $open:expr => $close:expr)*) => {{
+        #[allow(unused_mut)]
+        let mut pairs = Pairs::new();
+        $(
+            pairs.insert($open.to_owned(), $close.to_owned());
+        )*
+
+        let search = Expr::parse_expr($search, pairs.clone()).unwrap();
+        let replacer = search.get_replacer(false, pairs).unwrap();
         let mut file = $input.to_owned();
 
         println!("running replacer");
@@ -484,6 +505,40 @@ fn test_simple_string() {
 #[test]
 fn test_basic() {
     replacer_test!("foo { bar }", "foo { bar }", "xxx", @"xxx", 2);
+}
+
+#[test]
+fn test_xml_without_balancing() {
+    replacer_test!(
+        "<div><div>hello world</div></div>",
+        "([^^])<div>(.*)</div>",
+        "$1<span>$2</span>",
+        @"<div><span>hello world</div></span>",
+        2
+    );
+}
+
+#[test]
+fn test_xml_without_parens() {
+    replacer_test!(
+        "<div><div>hello world</div></div>",
+        "([^^]) <div> (.*) </div>",
+        "$1<span>$2</span>",
+        @"<div><span>hello world</div></span>",
+        2
+    );
+}
+
+#[test]
+fn test_xml_balanced() {
+    replacer_test!(
+        "<div><div>hello world</div></div>",
+        "([^^]) <div> (.*) </div>",
+        "$1<span>$2</span>",
+        @"<div><span>hello world</span></div>",
+        2,
+        "<div>" => "</div>"
+    );
 }
 
 #[test]
@@ -674,12 +729,12 @@ fn test_commas() {
                     "json.dumps",
                 ),
                 Open(
-                    '(',
-                    ')',
+                    "(",
+                    ")",
                 ),
                 Open(
-                    '{',
-                    '}',
+                    "{",
+                    "}",
                 ),
                 Text(
                     "\"options\":",
@@ -688,12 +743,12 @@ fn test_commas() {
                     "self.options",
                 ),
                 Close(
-                    '{',
-                    '}',
+                    "{",
+                    "}",
                 ),
                 Close(
-                    '(',
-                    ')',
+                    "(",
+                    ")",
                 ),
                 Text(
                     ",",
@@ -711,23 +766,23 @@ fn test_multi_whitespace() {
         Expr {
             tokens: [
                 Open(
-                    '{',
-                    '}',
+                    "{",
+                    "}",
                 ),
                 Open(
-                    '{',
-                    '}',
+                    "{",
+                    "}",
                 ),
                 Text(
                     "foo",
                 ),
                 Close(
-                    '{',
-                    '}',
+                    "{",
+                    "}",
                 ),
                 Close(
-                    '{',
-                    '}',
+                    "{",
+                    "}",
                 ),
             ],
         },
@@ -745,26 +800,51 @@ fn test_regression_parens() {
                     "self.create_user",
                 ),
                 Open(
-                    '(',
-                    ')',
+                    "(",
+                    ")",
                 ),
                 Open(
-                    '\"',
-                    '\"',
+                    "\"",
+                    "\"",
                 ),
                 Text(
                     "(.*)",
                 ),
                 Close(
-                    '\"',
-                    '\"',
+                    "\"",
+                    "\"",
                 ),
                 Text(
                     "(.*)",
                 ),
                 Close(
-                    '(',
-                    ')',
+                    "(",
+                    ")",
+                ),
+            ],
+        },
+    )
+    "###);
+}
+
+#[test]
+fn test_parse_xml() {
+    let mut pairs = Pairs::new();
+    pairs.insert("<div>".to_owned(), "</div>".to_owned());
+    insta::assert_debug_snapshot!(Expr::parse_expr(r#"<div> foo </div>"#, pairs), @r###"
+    Ok(
+        Expr {
+            tokens: [
+                Open(
+                    "<div>",
+                    "</div>",
+                ),
+                Text(
+                    "foo",
+                ),
+                Close(
+                    "<div>",
+                    "</div>",
                 ),
             ],
         },
