@@ -295,7 +295,7 @@ impl<'a> Replacer<'a> {
                 .iter()
                 .enumerate()
                 .filter_map(|(i, token)| {
-                    Some((i == self.expr.tokens.len() - 1, token.as_parenthesis()?))
+                    Some((i, token.as_parenthesis()?))
                 })
                 .peekable();
 
@@ -318,14 +318,14 @@ impl<'a> Replacer<'a> {
                     continue;
                 }
 
-                if let Some((is_last_token, c2)) = expr_parens.peek().cloned() {
+                if let Some((i2, c2)) = expr_parens.peek().cloned() {
                     if c2 == c {
                         expr_parens.next();
 
-                        if is_last_token && match_str.len() > i + 1 {
+                        if expr_parens.peek().is_none() && match_str.len() > i + 1 {
                             return Some(MatchingAction::RetrySubstring(
                                 full_match.start(),
-                                full_match.start() + i,
+                                full_match.start() + i + self.expr.tokens[i2..].iter().map(|token| ,
                             ));
                         }
 
@@ -714,6 +714,27 @@ fn test_regex_and_regular_parens4() {
     let replace = r#"uuid.uuid4().hex"#;
 
     replacer_test!(file, search, replace, @"uuid.uuid4().hex", 2);
+}
+
+#[test]
+fn test_html5gum() {
+    let file = r#"
+                c => {
+                    machine_helper.state = State::ScriptData;
+                    slf.reader.unread_char(c);
+                    ControlToken::Continue
+                }
+                Some("\0") => {
+                    emitter.emit_error(Error::UnexpectedNullCharacter);
+                    emitter.emit_string("\u{fffd}");
+                    ControlToken::Continue
+                }
+    "#;
+
+    let search = r#"machine_helper.state = (.+) ; slf.reader.unread_char ( (.+) ) ; ControlToken::Continue"#;
+    let replace = r#"reconsume_in!($2 , $1)"#;
+
+    replacer_test!(file, search, replace, @"", 2);
 }
 
 #[test]
