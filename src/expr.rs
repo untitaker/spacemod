@@ -304,6 +304,7 @@ impl<'a> Replacer<'a> {
             for re_match in self.pairs_re.find_iter(match_str) {
                 let i = re_match.end();
                 let c = re_match.as_str();
+                dbg!(c);
 
                 let (is_open, counterpart) = if let Some(close) = self.pairs.get(c) {
                     (true, close.clone())
@@ -334,6 +335,13 @@ impl<'a> Replacer<'a> {
                 }
 
                 if is_open || c == counterpart {
+                    if expr_parens.peek().is_none() {
+                        return Some(MatchingAction::RetrySubstring(
+                            full_match.start(),
+                            full_match.start() + i,
+                        ));
+                    }
+
                     extra_stack.push(c.to_owned());
                     continue;
                 }
@@ -462,7 +470,7 @@ fn test_nested_expr() {
 
 #[cfg(test)]
 macro_rules! replacer_test {
-    ($input:expr, $search:expr, $replace:expr, @$output:expr, $steps:expr $(, $open:expr => $close:expr)*) => {{
+    ($input:expr, $search:expr, $replace:expr $(, $open:expr => $close:expr)*, @$output:expr) => {{
         #[allow(unused_mut)]
         let mut pairs = Pairs::new();
         $(
@@ -488,10 +496,8 @@ macro_rules! replacer_test {
             file = new_file.into_owned();
         }
 
-        assert_eq!(steps, $steps);
-
         insta::assert_snapshot!(
-            file,
+            format!("// spacemod: steps_taken={steps}\n{file}"),
             @$output
         );
     }}
@@ -499,12 +505,18 @@ macro_rules! replacer_test {
 
 #[test]
 fn test_simple_string() {
-    replacer_test!("foo { bar }", "foo", "xxx", @"xxx { bar }", 2);
+    replacer_test!("foo { bar }", "foo", "xxx", @r###"
+    // spacemod: steps_taken=2
+    xxx { bar }
+    "###);
 }
 
 #[test]
 fn test_basic() {
-    replacer_test!("foo { bar }", "foo { bar }", "xxx", @"xxx", 2);
+    replacer_test!("foo { bar }", "foo { bar }", "xxx", @r###"
+    // spacemod: steps_taken=2
+    xxx
+    "###);
 }
 
 #[test]
@@ -513,9 +525,10 @@ fn test_xml_without_balancing() {
         "<div><div>hello world</div></div>",
         "([^^])<div>(.*)</div>",
         "$1<span>$2</span>",
-        @"<div><span>hello world</div></span>",
-        2
-    );
+        @r###"
+    // spacemod: steps_taken=2
+    <div><span>hello world</div></span>
+    "###);
 }
 
 #[test]
@@ -524,9 +537,10 @@ fn test_xml_without_parens() {
         "<div><div>hello world</div></div>",
         "([^^]) <div> (.*) </div>",
         "$1<span>$2</span>",
-        @"<div><span>hello world</div></span>",
-        2
-    );
+        @r###"
+    // spacemod: steps_taken=2
+    <div><span>hello world</div></span>
+    "###);
 }
 
 #[test]
@@ -535,9 +549,11 @@ fn test_xml_balanced() {
         "<div><div>hello world</div></div>",
         "([^^]) <div> (.*) </div>",
         "$1<span>$2</span>",
-        @"<div><span>hello world</span></div>",
-        2,
-        "<div>" => "</div>"
+        "<div>" => "</div>",
+        @r###"
+    // spacemod: steps_taken=2
+    <div><span>hello world</span></div>
+    "###
     );
 }
 
@@ -557,16 +573,17 @@ fn test_relay_code() {
         "fn main ( ) { (.*) }",
         "fn poopy() {$1}",
 
-        @r###"use foo::Bar;
+        @r###"
+    // spacemod: steps_taken=2
+    use foo::Bar;
 
-        fn poopy() {
-            let outdir = match env::var_os("OUT_DIR") {
-                None => return,
-                Some(outdir) => outdir,
-            };
-        }
-"###, 2
-    );
+            fn poopy() {
+                let outdir = match env::var_os("OUT_DIR") {
+                    None => return,
+                    Some(outdir) => outdir,
+                };
+            }
+    "###);
 }
 
 #[test]
@@ -576,9 +593,10 @@ fn test_example_good() {
     let replace = r#"String::from("$1")"#;
     replacer_test!(
         file, search, replace,
-        @r###"vec![String::from("foo"), String::from("bar"), String::from("baz")]"###,
-        4
-    );
+        @r###"
+    // spacemod: steps_taken=4
+    vec![String::from("foo"), String::from("bar"), String::from("baz")]
+    "###);
 }
 
 #[test]
@@ -588,9 +606,10 @@ fn test_example_bad() {
     let replace = r#"String::from("$1")"#;
     replacer_test!(
         file, search, replace,
-        @r###"vec![String::from(String::from(String::from("foo"), "bar"), "baz")]"###,
-        4
-    );
+        @r###"
+    // spacemod: steps_taken=4
+    vec![String::from(String::from(String::from("foo"), "bar"), "baz")]
+    "###);
 }
 
 #[test]
@@ -599,7 +618,10 @@ fn test_no_match() {
     let search = "hello";
     let replace = "oh no";
 
-    replacer_test!(file, search, replace, @"foo bar baz", 1);
+    replacer_test!(file, search, replace, @r###"
+    // spacemod: steps_taken=1
+    foo bar baz
+    "###);
 }
 
 #[test]
@@ -615,13 +637,13 @@ fn test_regression1() {
     replacer_test!(
         file, search, replace,
         @r###"
+    // spacemod: steps_taken=3
     fn foo() {
         self.0.push(format!("process_value({})", state.path()));
         self.0.push(String::from("before_process_child_values"));
         self.0.push(String::from("after_process_child_values"));
     }
-    "###, 3
-    );
+    "###);
 }
 
 #[test]
@@ -630,7 +652,10 @@ fn test_regression_extra_parens() {
     let search = r"pytestmark\s*=\s*pytest.mark.skip ( .* )";
     let replace = "";
 
-    replacer_test!( file, search, replace, @" ; def foo(): pass", 2);
+    replacer_test!( file, search, replace, @r###"
+    // spacemod: steps_taken=2
+     ; def foo(): pass
+    "###);
 }
 
 #[test]
@@ -644,12 +669,12 @@ map.insert("###;
 
     replacer_test!(
     file, search, replace, @r###"
-
+    // spacemod: steps_taken=2
     "do not ,./<>?!@#$%^&*())'ßtrip'".to_string(),
     Foo(Bar(Baz(String::from("foo")))),
     );
     map.insert(
-    "###, 2);
+    "###);
 }
 
 #[test]
@@ -661,9 +686,10 @@ fn test_remaining_expr_parens() {
     let replace = r#"String::from("$1")"#;
 
     replacer_test!(file, search, replace, @r###"
+    // spacemod: steps_taken=2
     // "foo"
     (String::from("some"))
-    "###, 2);
+    "###);
 }
 
 #[test]
@@ -673,7 +699,10 @@ fn test_nested_parens() {
     let search = r#"str ( uuid.uuid4 ( ) )"#;
     let replace = r#"uuid.uuid4().hex"#;
 
-    replacer_test!(file, search, replace, @"uuid.uuid4().hex", 2);
+    replacer_test!(file, search, replace, @r###"
+    // spacemod: steps_taken=2
+    uuid.uuid4().hex
+    "###);
 }
 
 #[test]
@@ -683,7 +712,10 @@ fn test_regex_and_regular_parens() {
     let search = r#"str\( uuid.uuid4 ( ) \);"#;
     let replace = r#"uuid.uuid4().hex;"#;
 
-    replacer_test!(file, search, replace, @"uuid.uuid4().hex;", 2);
+    replacer_test!(file, search, replace, @r###"
+    // spacemod: steps_taken=2
+    uuid.uuid4().hex;
+    "###);
 }
 
 #[test]
@@ -693,7 +725,10 @@ fn test_regex_and_regular_parens2() {
     let search = r#"str ( uuid.uuid4\(\) )"#;
     let replace = r#"uuid.uuid4().hex"#;
 
-    replacer_test!(file, search, replace, @"uuid.uuid4().hex", 2);
+    replacer_test!(file, search, replace, @r###"
+    // spacemod: steps_taken=2
+    uuid.uuid4().hex
+    "###);
 }
 
 #[test]
@@ -703,7 +738,10 @@ fn test_regex_and_regular_parens3() {
     let search = r#"str\{ uuid.uuid4 ( ) \};"#;
     let replace = r#"uuid.uuid4().hex;"#;
 
-    replacer_test!(file, search, replace, @"uuid.uuid4().hex;", 2);
+    replacer_test!(file, search, replace, @r###"
+    // spacemod: steps_taken=2
+    uuid.uuid4().hex;
+    "###);
 }
 
 #[test]
@@ -713,7 +751,32 @@ fn test_regex_and_regular_parens4() {
     let search = r#"str { uuid.uuid4\(\) }"#;
     let replace = r#"uuid.uuid4().hex"#;
 
-    replacer_test!(file, search, replace, @"uuid.uuid4().hex", 2);
+    replacer_test!(file, search, replace, @r###"
+    // spacemod: steps_taken=2
+    uuid.uuid4().hex
+    "###);
+}
+
+#[test]
+fn test_html5gum() {
+    let file = r#"
+    unread_char(c);
+    continue
+    emitter();
+    continue
+    "#;
+
+    let search = r#"unread_char ( (.+) ) ; continue"#;
+    let replace = r#"reconsume_in!($1)"#;
+
+    replacer_test!(file, search, replace, @r###"
+    // spacemod: steps_taken=2
+
+        reconsume_in!(c)
+        emitter();
+        continue
+        
+    "###);
 }
 
 #[test]
