@@ -337,8 +337,8 @@ impl<'a> Replacer<'a> {
                 if is_open || c == counterpart {
                     if expr_parens.peek().is_none() {
                         return Some(MatchingAction::RetrySubstring(
-                                full_match.start(),
-                                full_match.start() + i
+                            full_match.start(),
+                            full_match.start() + i,
                         ));
                     }
 
@@ -470,7 +470,7 @@ fn test_nested_expr() {
 
 #[cfg(test)]
 macro_rules! replacer_test {
-    ($input:expr, $search:expr, $replace:expr, @$output:expr $(, $open:expr => $close:expr)*) => {{
+    ($input:expr, $search:expr, $replace:expr $(, $open:expr => $close:expr)*, @$output:expr) => {{
         #[allow(unused_mut)]
         let mut pairs = Pairs::new();
         $(
@@ -549,8 +549,11 @@ fn test_xml_balanced() {
         "<div><div>hello world</div></div>",
         "([^^]) <div> (.*) </div>",
         "$1<span>$2</span>",
-        @"<div><span>hello world</span></div>",
-        "<div>" => "</div>"
+        "<div>" => "</div>",
+        @r###"
+    // spacemod: steps_taken=2
+    <div><span>hello world</span></div>
+    "###
     );
 }
 
