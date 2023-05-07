@@ -304,6 +304,7 @@ impl<'a> Replacer<'a> {
             for re_match in self.pairs_re.find_iter(match_str) {
                 let i = re_match.end();
                 let c = re_match.as_str();
+                dbg!(c);
 
                 let (is_open, counterpart) = if let Some(close) = self.pairs.get(c) {
                     (true, close.clone())
@@ -334,6 +335,13 @@ impl<'a> Replacer<'a> {
                 }
 
                 if is_open || c == counterpart {
+                    if expr_parens.peek().is_none() {
+                        return Some(MatchingAction::RetrySubstring(
+                                full_match.start(),
+                                full_match.start() + i
+                        ));
+                    }
+
                     extra_stack.push(c.to_owned());
                     continue;
                 }
@@ -719,20 +727,14 @@ fn test_regex_and_regular_parens4() {
 #[test]
 fn test_html5gum() {
     let file = r#"
-                c => {
-                    machine_helper.state = State::ScriptData;
-                    slf.reader.unread_char(c);
-                    ControlToken::Continue
-                }
-                Some("\0") => {
-                    emitter.emit_error(Error::UnexpectedNullCharacter);
-                    emitter.emit_string("\u{fffd}");
-                    ControlToken::Continue
-                }
+    unread_char(c);
+    continue
+    emitter();
+    continue
     "#;
 
-    let search = r#"machine_helper.state = (.+) ; slf.reader.unread_char ( (.+) ) ; ControlToken::Continue"#;
-    let replace = r#"reconsume_in!($2 , $1)"#;
+    let search = r#"unread_char ( (.+) ) ; continue"#;
+    let replace = r#"reconsume_in!($1)"#;
 
     replacer_test!(file, search, replace, @"", 2);
 }
