@@ -304,7 +304,6 @@ impl<'a> Replacer<'a> {
             for re_match in self.pairs_re.find_iter(match_str) {
                 let i = re_match.end();
                 let c = re_match.as_str();
-                dbg!(c);
 
                 let (is_open, counterpart) = if let Some(close) = self.pairs.get(c) {
                     (true, close.clone())
