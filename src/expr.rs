@@ -295,7 +295,7 @@ impl<'a> Replacer<'a> {
                 .iter()
                 .enumerate()
                 .filter_map(|(i, token)| {
-                    Some((i, token.as_parenthesis()?))
+                    Some((i == self.expr.tokens.len() - 1, token.as_parenthesis()?))
                 })
                 .peekable();
 
@@ -318,14 +318,14 @@ impl<'a> Replacer<'a> {
                     continue;
                 }
 
-                if let Some((i2, c2)) = expr_parens.peek().cloned() {
+                if let Some((is_last_token, c2)) = expr_parens.peek().cloned() {
                     if c2 == c {
                         expr_parens.next();
 
-                        if expr_parens.peek().is_none() && match_str.len() > i + 1 {
+                        if is_last_token && match_str.len() > i + 1 {
                             return Some(MatchingAction::RetrySubstring(
                                 full_match.start(),
-                                full_match.start() + i + self.expr.tokens[i2..].iter().map(|token| ,
+                                full_match.start() + i,
                             ));
                         }
 
