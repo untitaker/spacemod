@@ -116,7 +116,7 @@ impl Expr {
             let token = tokens.last_mut().unwrap();
 
             if let Token::Text(c) = token {
-                if parens_stack.last().and_then(|open| pairs.get(open)) == Some(&c) {
+                if parens_stack.last().and_then(|open| pairs.get(open)) == Some(c) {
                     *token = Token::Close(parens_stack.pop().unwrap(), c.clone());
                 } else if let Some(close) = pairs.get(&*c) {
                     parens_stack.push(c.clone());
@@ -166,7 +166,7 @@ impl Expr {
             }
 
             match token {
-                Token::Text(regex) => rv.push_str(&regex),
+                Token::Text(regex) => rv.push_str(regex),
                 Token::Open(open, _) => {
                     rv.push_str(&regex::escape(&open.to_string()));
                 }
@@ -250,7 +250,7 @@ fn replace_overlapping(
             MatchingAction::JumpForward(i) => i,
             MatchingAction::RetrySubstring(start, end) => {
                 let new_input = &input[..end];
-                if let Some(action) = replacer(&new_input) {
+                if let Some(action) = replacer(new_input) {
                     match action {
                         MatchingAction::Replaced(replacement2) => {
                             input = replacement2 + &input[end..];

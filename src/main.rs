@@ -179,7 +179,7 @@ fn main() -> Result<(), Error> {
             fs::write(entry.path(), &*new_file)?;
             changed = true;
 
-            file = new_file.to_owned().to_string();
+            file = new_file.to_string();
         }
 
         if accept_all && changed {
