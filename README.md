@@ -91,7 +91,7 @@ You can extend this list with `-p ab` where `a` is the opening parenthesis, and
 
 You may find the following tools useful if spacemod is doing too much or too
 little for you. The primary focus of this list is on editor/IDE-independent
-tools, and preferrably on those which can be composed into more complex
+tools, and preferably on those which can be composed into more complex
 shell-scripts.
 
 * `spacemod` is heavily inspired by
