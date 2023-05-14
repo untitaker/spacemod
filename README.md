@@ -98,6 +98,9 @@ shell-scripts.
   [fastmod](https://github.com/facebookincubator/fastmod) and was specifically
   built to deal with shortcomings of regex. `fastmod` is much faster.
 
+* [`ast-grep`](https://ast-grep.github.io/) is a very easy to use AST-based
+  code search tool.
+
 * [`comby`](https://comby.dev/) actually has grammars built-in for various
   filetypes to understand what wildcards are supposed to match in which
   contexts. It appears to be "a step up" from `spacemod` the same way
