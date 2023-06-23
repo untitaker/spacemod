@@ -15,7 +15,6 @@ structopt = "0.3.20"
 anyhow = "1.0.34"
 ignore = "0.4.16"
 difference = "2.0.0"
-dialoguer = "0.7.1"
 console = "0.13.0"
 itertools = "0.10.0"
 

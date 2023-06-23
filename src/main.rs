@@ -1,15 +1,13 @@
 mod expr;
 
 use std::collections::VecDeque;
-use std::fmt;
 use std::fs;
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use anyhow::{Context, Error};
-use thiserror::Error;
-
+use console::{style, Key};
 use structopt::StructOpt;
+use thiserror::Error;
 
 use expr::{parse_pairs, Expr};
 
@@ -62,35 +60,13 @@ struct Cli {
 enum PromptAnswer {
     Yes,
     No,
+    Undo,
     All,
 }
 
 #[derive(Error, Debug)]
 #[error("invalid answer!")]
 struct PromptError;
-
-impl FromStr for PromptAnswer {
-    type Err = PromptError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "yes" | "y" => Ok(PromptAnswer::Yes),
-            "no" | "n" => Ok(PromptAnswer::No),
-            "all" | "a" if s == "A" || s.len() != 1 => Ok(PromptAnswer::All),
-            _ => Err(PromptError),
-        }
-    }
-}
-
-impl fmt::Display for PromptAnswer {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PromptAnswer::Yes => write!(f, "yes"),
-            PromptAnswer::No => write!(f, "no"),
-            PromptAnswer::All => write!(f, "all"),
-        }
-    }
-}
 
 fn main() -> Result<(), Error> {
     let Cli {
@@ -142,7 +118,21 @@ fn main() -> Result<(), Error> {
             Err(_) => continue, // presumably binary file
         };
 
+        let mut old_files = VecDeque::new();
+        let mut flashed_message = None;
+
         let mut changed = false;
+
+        let mut change_i = 0;
+
+        let change_file = |file: &mut String, to: String| -> Result<(), Error> {
+            if fs::read_to_string(entry.path()).map_or(true, |x| x != *file) {
+                anyhow::bail!("file was changed while spacemod is running. Bailing out!");
+            }
+            *file = to;
+            fs::write(entry.path(), &*file)?;
+            Ok(())
+        };
 
         loop {
             let new_file = replacer.replace(&file, &replace);
@@ -154,32 +144,61 @@ fn main() -> Result<(), Error> {
             if !accept_all {
                 term.clear_screen()?;
 
-                println!("{}\n\n\n", entry.path().display());
                 let changeset = difference::Changeset::new(&file.to_string(), &new_file, "\n");
                 print_changeset(changeset);
-                print!("\n\n\n");
+                println!(
+                    "\n\n\n{path} [{change_i}] {flashed_message}",
+                    path = style(entry.path().display()).blue(),
+                    change_i = style(change_i).yellow(),
+                    flashed_message = style(flashed_message.take().unwrap_or_default()).red()
+                );
 
-                let input: PromptAnswer = dialoguer::Input::new()
-                    .with_prompt("Accept changes? [y]es [n]o [A]ll")
-                    .with_initial_text("")
-                    .default(PromptAnswer::Yes)
-                    .interact_text()?;
+                println!(
+                    "Accept changes? {y} {n} [u]ndo [A]ll",
+                    y = style("[y]es").green(),
+                    n = style("[n]o").red(),
+                );
+
+                let input = loop {
+                    match term.read_key()? {
+                        Key::Char('y') | Key::Enter => break PromptAnswer::Yes,
+                        Key::Char('n') => break PromptAnswer::No,
+                        Key::Char('u') => break PromptAnswer::Undo,
+                        Key::Char('A') => break PromptAnswer::All,
+                        _ => continue,
+                    }
+                };
 
                 match input {
                     PromptAnswer::No => {
+                        // BUG: this skips over the entire file instead of skipping a single change
                         continue 'files;
                     }
                     PromptAnswer::All => {
                         accept_all = true;
                     }
+                    PromptAnswer::Undo => {
+                        if let Some(old_file) = old_files.pop_front() {
+                            change_file(&mut file, old_file)?;
+                            change_i -= 1;
+                            continue;
+                        } else {
+                            flashed_message = Some("!!! nothing on the undo stack");
+                            continue;
+                        }
+                    }
                     PromptAnswer::Yes => {}
                 }
             }
 
-            fs::write(entry.path(), &*new_file)?;
             changed = true;
 
-            file = new_file.to_string();
+            old_files.push_front(file.to_string());
+            old_files.truncate(1024);
+
+            let new_file = new_file.to_string();
+            change_file(&mut file, new_file)?;
+            change_i += 1;
         }
 
         if accept_all && changed {
