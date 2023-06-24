@@ -3,13 +3,14 @@ mod expr;
 use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::channel;
 
 use anyhow::{Context, Error};
 use console::{style, Key};
+use rayon::prelude::*;
 use structopt::StructOpt;
-use thiserror::Error;
 
-use expr::{parse_pairs, Expr};
+use expr::{parse_pairs, Expr, Replacer};
 
 #[derive(StructOpt)]
 #[structopt(name = "spacemod")]
@@ -64,28 +65,21 @@ enum PromptAnswer {
     All,
 }
 
-#[derive(Error, Debug)]
-#[error("invalid answer!")]
-struct PromptError;
-
 fn main() -> Result<(), Error> {
     let Cli {
         search,
         replace,
-        mut accept_all,
+        accept_all,
         extensions,
         file_or_dir,
         multiline,
         pairs,
     } = Cli::from_args();
-    let term = console::Term::stdout();
 
     let user_defined_pairs = parse_pairs(&pairs)?;
     let expr = Expr::parse_expr(&search, user_defined_pairs.clone())
         .context("failed to parse search string")?;
     let replacer = expr.get_replacer(multiline, user_defined_pairs)?;
-
-    let mut undo_stack = VecDeque::new();
 
     let mut walk_builder = if file_or_dir.is_empty() {
         ignore::WalkBuilder::new(".")
@@ -108,25 +102,65 @@ fn main() -> Result<(), Error> {
         walk_builder.overrides(builder.build()?);
     }
 
-    let walker = walk_builder.build().filter_map(|entry| {
-        let entry = match entry {
-            Ok(x) => x,
-            Err(e) => return Some(Err(e)),
-        };
+    let mut result = None;
 
-        let filetype = entry.file_type().unwrap();
-        if !filetype.is_file() {
-            return None;
-        }
-        let file_path = entry.path().to_owned();
-        let file = match fs::read_to_string(&file_path) {
-            Ok(x) => x,
-            Err(_) => return None, // presumably binary file
-        };
+    rayon::scope(|scope| {
+        let (sender, receiver) = channel();
 
-        Some(Ok((file_path, file)))
+        scope.spawn(|_| {
+            walk_builder
+                .build()
+                .par_bridge()
+                .filter_map(|entry| {
+                    let entry = match entry {
+                        Ok(x) => x,
+                        Err(e) => return Some(Err(e.into())),
+                    };
+
+                    let filetype = entry.file_type().unwrap();
+                    if !filetype.is_file() {
+                        return None;
+                    }
+                    let file_path = entry.path().to_owned();
+                    let file = match fs::read_to_string(&file_path) {
+                        Ok(x) => x,
+                        Err(_) => return None, // presumably binary file
+                    };
+
+                    if !replacer.prefilter_matches(&file) {
+                        return None;
+                    }
+
+                    Some(Ok((file_path, file)))
+                })
+                .for_each_with(sender, |sender, result| {
+                    // ignore send error because UI thread can quit anytime
+                    sender.send(result).ok();
+                });
+        });
+
+        scope.spawn(|_| {
+            result = Some(run_ui(
+                &replace,
+                accept_all,
+                &replacer,
+                receiver.into_iter(),
+            ));
+        });
     });
-    let mut walker = itertools::put_back_n(walker);
+
+    result.unwrap()
+}
+
+fn run_ui(
+    replace: &str,
+    mut accept_all: bool,
+    replacer: &Replacer<'_>,
+    receiver: impl Iterator<Item = Result<(PathBuf, String), Error>>,
+) -> Result<(), Error> {
+    let term = console::Term::stdout();
+    let mut walker = itertools::put_back_n(receiver);
+    let mut undo_stack = VecDeque::new();
 
     'files: while let Some(result) = walker.next() {
         let (mut file_path, mut file) = result?;
