@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Error};
 use console::{style, Key};
-use jwalk::WalkDirGeneric;
+use jwalk::WalkDir;
 use rayon::prelude::*;
 use structopt::StructOpt;
 
@@ -91,35 +91,29 @@ fn build_walk_dir<'a>(
     path: &Path,
 ) -> impl 'a + ParallelIterator<Item = Result<(PathBuf, String), Error>> {
     // code mainly lifted from untitaker/hyperlink
-    WalkDirGeneric::<((), bool)>::new(path)
+    WalkDir::new(path)
         .sort(true) // helps branch predictor (?)
         .skip_hidden(false)
-        .process_read_dir(move |_, _, _, children| {
-            for dir_entry_result in children.iter_mut() {
-                if let Ok(dir_entry) = dir_entry_result {
-                    dir_entry.client_state = dir_entry.file_type().is_file()
-                        && matches_filter_extensions(&filter_extensions, &dir_entry.path());
-                }
-            }
-        })
         .into_iter()
         .par_bridge()
         .filter_map(move |entry_result| {
             let entry = match entry_result {
-                Ok(entry) => {
-                    if let Some(err) = entry.read_children_error {
-                        // https://github.com/Byron/jwalk/issues/40
-                        return Some(Err(err.into()));
-                    }
-
-                    if !entry.client_state {
-                        return None;
-                    }
-
-                    entry
-                }
+                Ok(entry) => entry,
                 Err(e) => return Some(Err(e.into())),
             };
+
+            if let Some(err) = entry.read_children_error {
+                // https://github.com/Byron/jwalk/issues/40
+                return Some(Err(err.into()));
+            }
+
+            if !entry.file_type().is_file() {
+                return None;
+            }
+
+            if !matches_filter_extensions(&filter_extensions, &entry.path()) {
+                return None;
+            }
 
             let filetype = entry.file_type();
             if !filetype.is_file() {
@@ -170,7 +164,7 @@ fn main() -> Result<(), Error> {
     let mut result = None;
 
     rayon::scope(|scope| {
-        let (sender, receiver) = sync_channel(1024);
+        let (sender, receiver) = sync_channel(128);
 
         for walk_builder in walk_builders {
             let sender = sender.clone();
