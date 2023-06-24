@@ -28,6 +28,10 @@ struct Cli {
     /// Optionally, a file or directory to modify instead of `./`
     file_or_dir: Vec<PathBuf>,
 
+    /// How many threads to use, default is to try and saturate CPU.
+    #[structopt(short = "j", long = "jobs")]
+    threads: Option<usize>,
+
     /// Have regex work over multiple lines.
     ///
     /// When using parenthesis-matching, multiline mode is already enabled.
@@ -137,12 +141,26 @@ fn main() -> Result<(), Error> {
     let Cli {
         search,
         replace,
+        threads,
         accept_all,
         extensions,
         file_or_dir,
         multiline,
         pairs,
     } = Cli::from_args();
+
+    // most of the work we do is kind of I/O bound. rayon assumes CPU-heavy workload. we could
+    // look into tokio-uring at some point, but it seems like a hassle wrt ownership
+    let mut threads = threads.unwrap_or_else(|| 4 * num_cpus::get());
+    if threads < 2 {
+        // we need at least two threads, one for file search and one for the UI
+        threads = 2;
+    }
+
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+        .unwrap();
 
     let user_defined_pairs = parse_pairs(&pairs)?;
     let expr = Expr::parse_expr(&search, user_defined_pairs.clone())
