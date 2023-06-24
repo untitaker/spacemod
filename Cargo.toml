@@ -18,6 +18,7 @@ difference = "2.0.0"
 console = "0.13.0"
 itertools = "0.10.0"
 rayon = "1.7.0"
+jwalk = "0.8.1"
 
 [dev-dependencies]
 insta = "1.2.0"
