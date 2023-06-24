@@ -123,7 +123,7 @@ fn build_walk_dir<'a>(
             if !filetype.is_file() {
                 return None;
             }
-            let file_path = entry.path().to_owned();
+            let file_path = entry.path();
             let file = match fs::read_to_string(&file_path) {
                 Ok(x) => x,
                 Err(_) => return None, // presumably binary file
@@ -236,7 +236,7 @@ fn run_ui(
         };
 
         loop {
-            let new_file = replacer.replace(&file, &replace);
+            let new_file = replacer.replace(&file, replace);
 
             if new_file == file {
                 break;
