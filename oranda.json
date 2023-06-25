@@ -1,5 +1,8 @@
 {
     "artifacts": {
         "cargo_dist": true
+    },
+    "build": {
+        "path_prefix": "spacemod"
     }
 }
