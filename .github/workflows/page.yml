@@ -9,6 +9,12 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
+  workflow_run:
+    workflows:
+      - Release
+    types:
+      - completed
+
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
   contents: read
@@ -25,20 +31,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Setup Pages
-        uses: actions/configure-pages@v1
+      - uses: actions/checkout@v3
+      - uses: actions/configure-pages@v1
       - name: Install Oranda
         # We need oranda pre-release so that we can use page_prefix
         run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/oranda/releases/download/v0.1.0-prerelease.8/oranda-installer.sh | sh
-      - name: Install cargo-dist
-        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.0.7/cargo-dist-installer.sh | sh
-      - name: Run oranda
-        run: oranda build
+      - run: oranda build
       - run: find public/
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v1
+      - uses: actions/upload-pages-artifact@v1
         with:
           path: ./public/
 
