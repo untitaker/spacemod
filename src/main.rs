@@ -7,15 +7,15 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::sync_channel;
 
 use anyhow::{Context, Error};
+use clap::Parser;
 use console::{style, Key, Style};
 use ignore::WalkState;
 use itertools::Itertools;
 use similar::{ChangeTag, TextDiff};
-use structopt::StructOpt;
 
 use expr::{parse_pairs, Expr, Replacer};
 
-#[derive(StructOpt)]
+#[derive(Parser)]
 #[structopt(name = "spacemod")]
 struct Cli {
     /// The pattern to search for.
@@ -30,37 +30,37 @@ struct Cli {
     file_or_dir: Vec<PathBuf>,
 
     /// How many threads to use, default is to try and saturate CPU.
-    #[structopt(short = "j", long = "jobs")]
+    #[structopt(short = 'j', long = "jobs")]
     threads: Option<usize>,
 
     /// Enable replacing in hidden files.
-    #[structopt(short = "u", long = "hidden")]
+    #[structopt(short = 'u', long = "hidden")]
     hidden: bool,
 
     /// Enable parenthesis-matching and implicit whitespace matching.
     ///
     /// Any (unescaped) space in SEARCH is implicitly replaced with '\s*', and parenthesis
     /// surrounded by spaces such as in '( .* )' will match literally.
-    #[structopt(short = "S", long = "spacemode")]
+    #[structopt(short = 'S', long = "spacemode")]
     spacemode: bool,
 
     /// Interpret SEARCH as literal string.
     ///
     /// Disables all pattern-matching.
-    #[structopt(short = "F", long = "fixed-strings")]
+    #[structopt(short = 'F', long = "fixed-strings")]
     fixed_strings: bool,
 
     /// Have regex work over multiple lines.
     ///
     /// When using parenthesis-matching, multiline mode is already enabled.
-    #[structopt(short = "m", long = "multiline")]
+    #[structopt(short = 'm', long = "multiline")]
     multiline: bool,
     /// Automatically accept all changes (use with caution).
     #[structopt(long = "accept-all")]
     accept_all: bool,
     /// A list of file extensions to process. Either comma-delimited or by passing the option
     /// multiple times.
-    #[structopt(short = "e", long = "extensions", use_delimiter(true))]
+    #[structopt(short = 'e', long = "extensions", use_delimiter(true))]
     extensions: Vec<String>,
     /// A set of parenthesis to support in addition to the defaults. This option is necessary for
     /// spacemod to understand that ')' is the counterpart to '(', for example.
@@ -77,7 +77,7 @@ struct Cli {
     ///
     /// Specifying this option will append to that list. The option can be specified multiple
     /// times.
-    #[structopt(short = "p", long = "pairs")]
+    #[structopt(short = 'p', long = "pairs")]
     pairs: Vec<String>,
 }
 
