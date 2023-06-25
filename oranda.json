@@ -1,6 +1,14 @@
 {
-    "artifacts": {
-        "cargo_dist": true
+    "components": {
+        "artifacts": {
+            "cargo_dist": true,
+            "package_managers": {
+                "preferred": {
+                    "npm": "npm install @untitaker/spacemod",
+                    "cargo": "cargo install spacemod --locked --profile=dist"
+                }
+            }
+        }
     },
     "build": {
         "path_prefix": "spacemod"
