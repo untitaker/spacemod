@@ -25,6 +25,8 @@ but with some additional features:
 
 ## Installation
 
+<!-- oranda already provides installation instructions -->
+
 Check [the website](https://untitaker.github.io/spacemod/) for installation options.
 
 <!-- Hide these docs links as well because oranda does not rewrite the links to .md files, and I don't care enough to fix it -->
@@ -39,6 +41,8 @@ modes](./docs/matching.md) for the alternative modes that `spacemod` supports.
 There are many tools like `spacemod`, some of which may suit your needs better. Take a look at [Alternatives](./docs/alternatives.md).
 
 ## License
+
+<!-- link is busted in oranda -->
 
 Licensed under `MIT`, see [`./LICENSE`](./LICENSE).
 
