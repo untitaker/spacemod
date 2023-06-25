@@ -37,6 +37,19 @@ struct Cli {
     #[structopt(short = "u", long = "hidden")]
     hidden: bool,
 
+    /// Enable parenthesis-matching and implicit whitespace matching.
+    ///
+    /// Any (unescaped) space in SEARCH is implicitly replaced with '\s*', and parenthesis
+    /// surrounded by spaces such as in '( .* )' will match literally.
+    #[structopt(short = "S", long = "spacemode")]
+    spacemode: bool,
+
+    /// Interpret SEARCH as literal string.
+    ///
+    /// Disables all pattern-matching.
+    #[structopt(short = "F", long = "fixed-strings")]
+    fixed_strings: bool,
+
     /// Have regex work over multiple lines.
     ///
     /// When using parenthesis-matching, multiline mode is already enabled.
@@ -89,6 +102,8 @@ fn main() -> Result<(), Error> {
         file_or_dir,
         multiline,
         pairs,
+        spacemode,
+        fixed_strings,
     } = Cli::from_args();
 
     // most of the work we do is kind of I/O bound. rayon assumes CPU-heavy workload. we could
@@ -101,8 +116,22 @@ fn main() -> Result<(), Error> {
         .unwrap();
 
     let user_defined_pairs = parse_pairs(&pairs)?;
-    let expr = Expr::parse_expr(&search, user_defined_pairs.clone())
-        .context("failed to parse search string")?;
+
+    let expr = if spacemode && fixed_strings {
+        anyhow::bail!("-S conflicts with -F");
+    } else if fixed_strings {
+        Expr::parse_fixed_string(&search).context("failed to parse search string")?
+    } else if spacemode {
+        Expr::parse_expr(&search, user_defined_pairs.clone())
+            .context("failed to parse search string")?
+    } else {
+        if !user_defined_pairs.is_empty() {
+            anyhow::bail!("-p will do nothing because -s was not provided.");
+        }
+
+        Expr::parse_regex(&search).context("failed to parse search string")?
+    };
+
     let replacer = expr.get_replacer(multiline, user_defined_pairs)?;
 
     let mut walk_builder = if file_or_dir.is_empty() {

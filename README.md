@@ -37,7 +37,7 @@ vec![String::from(String::from(String::from("foo"), "bar"), "baz")]
 Let's try that again. `spacemod` lets you write:
 
 ```bash
-spacemod '" (.*) " \.to_string ( )' 'String::from("$1")'
+spacemod -S '" (.*) " \.to_string ( )' 'String::from("$1")'
 ```
 
 The correct end result looks like:
