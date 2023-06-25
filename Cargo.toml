@@ -17,10 +17,9 @@ ignore = "0.4.16"
 difference = "2.0.0"
 console = "0.13.0"
 itertools = "0.10.0"
-rayon = "1.7.0"
-jwalk = "0.8.1"
 num_cpus = "1.15.0"
 blake3 = "1.4.0"
+rayon = "1.7.0"
 
 [dev-dependencies]
 insta = "1.2.0"
