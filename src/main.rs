@@ -1,6 +1,6 @@
 mod expr;
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::sync_channel;
@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Error};
 use console::{style, Key};
+use difference::Difference;
 use jwalk::WalkDir;
 use rayon::prelude::*;
 use structopt::StructOpt;
@@ -31,6 +32,10 @@ struct Cli {
     /// How many threads to use, default is to try and saturate CPU.
     #[structopt(short = "j", long = "jobs")]
     threads: Option<usize>,
+
+    /// Enable replacing in hidden files.
+    #[structopt(short = "u", long = "hidden")]
+    hidden: bool,
 
     /// Have regex work over multiple lines.
     ///
@@ -68,6 +73,8 @@ enum PromptAnswer {
     Yes,
     No,
     Undo,
+    YesDiff,
+    NoDiff,
     All,
 }
 
@@ -91,13 +98,14 @@ fn matches_filter_extensions(filter_extensions: &[String], path: &Path) -> bool 
 
 fn build_walk_dir<'a>(
     replacer: &'a Replacer<'a>,
+    hidden: bool,
     filter_extensions: Arc<Vec<String>>,
     path: &Path,
 ) -> impl 'a + ParallelIterator<Item = Result<(PathBuf, String), Error>> {
     // code mainly lifted from untitaker/hyperlink
     WalkDir::new(path)
         .sort(true) // helps branch predictor (?)
-        .skip_hidden(false)
+        .skip_hidden(!hidden)
         .into_iter()
         .par_bridge()
         .filter_map(move |entry_result| {
@@ -142,6 +150,7 @@ fn main() -> Result<(), Error> {
         search,
         replace,
         threads,
+        hidden,
         accept_all,
         extensions,
         file_or_dir,
@@ -172,10 +181,10 @@ fn main() -> Result<(), Error> {
     let extensions = Arc::new(extensions);
 
     if file_or_dir.is_empty() {
-        walk_builders.push(build_walk_dir(&replacer, extensions, Path::new(".")));
+        walk_builders.push(build_walk_dir(&replacer, hidden, extensions, Path::new(".")));
     } else {
         for file in file_or_dir {
-            walk_builders.push(build_walk_dir(&replacer, extensions.clone(), &file));
+            walk_builders.push(build_walk_dir(&replacer, hidden, extensions.clone(), &file));
         }
     };
 
@@ -216,13 +225,13 @@ fn run_ui(
     let term = console::Term::stdout();
     let mut walker = itertools::put_back_n(receiver);
     let mut undo_stack = VecDeque::new();
+    let mut yes_diffs = BTreeSet::new();
+    let mut no_diffs = BTreeSet::new();
 
     'files: while let Some(result) = walker.next() {
         let (mut file_path, mut file) = result?;
 
         let mut flashed_message = None;
-
-        let mut changed = false;
 
         let mut change_i = 0;
 
@@ -242,10 +251,17 @@ fn run_ui(
                 break;
             }
 
-            if !accept_all {
+            let changeset = difference::Changeset::new(&file.to_string(), &new_file, "\n");
+            let changeset_hash = hash_changeset(&changeset);
+
+            let input = if accept_all || yes_diffs.contains(&changeset_hash) {
+                println!("Automatically changed {}", file_path.display());
+                PromptAnswer::Yes
+            } else if no_diffs.contains(&changeset_hash) {
+                PromptAnswer::No
+            } else {
                 term.clear_screen()?;
 
-                let changeset = difference::Changeset::new(&file.to_string(), &new_file, "\n");
                 print_changeset(changeset);
                 println!(
                     "\n\n\n{path} [{change_i}] {flashed_message}",
@@ -255,51 +271,61 @@ fn run_ui(
                 );
 
                 println!(
-                    "Accept changes? {y} {n} [u]ndo [A]ll",
+                    "Accept changes?\n\
+                    {y} [Y]es to all diffs like this\n\
+                    {n}  [N]o to all diffs like this\n\
+                    [u]ndo\n\
+                    [A]pprove everything",
                     y = style("[y]es").green(),
                     n = style("[n]o").red(),
                 );
 
-                let input = loop {
+                loop {
                     match term.read_key()? {
                         Key::Char('y') | Key::Enter => break PromptAnswer::Yes,
                         Key::Char('n') => break PromptAnswer::No,
                         Key::Char('u') => break PromptAnswer::Undo,
+                        Key::Char('Y') => break PromptAnswer::YesDiff,
+                        Key::Char('N') => break PromptAnswer::NoDiff,
                         Key::Char('A') => break PromptAnswer::All,
                         _ => continue,
                     }
-                };
+                }
+            };
 
-                match input {
-                    PromptAnswer::No => {
-                        // BUG: this skips over the entire file instead of skipping a single change
-                        continue 'files;
-                    }
-                    PromptAnswer::All => {
-                        accept_all = true;
-                    }
-                    PromptAnswer::Undo => {
-                        if let Some((old_file_path, change_from, change_to)) =
-                            undo_stack.pop_front()
-                        {
-                            if old_file_path != file_path {
-                                walker.put_back(Ok((file_path, file.clone())));
-                            }
-                            file_path = old_file_path;
-                            file = change_from;
-                            change_file(&file_path, &mut file, change_to)?;
-                            change_i -= 1;
-                            continue;
-                        } else {
-                            flashed_message = Some("!!! nothing on the undo stack");
-                            continue;
+            match input {
+                PromptAnswer::No => {
+                    // BUG: this skips over the entire file instead of skipping a single change
+                    continue 'files;
+                }
+                PromptAnswer::All => {
+                    accept_all = true;
+                }
+                PromptAnswer::Undo => {
+                    if let Some((old_file_path, change_from, change_to)) =
+                        undo_stack.pop_front()
+                    {
+                        if old_file_path != file_path {
+                            walker.put_back(Ok((file_path, file.clone())));
                         }
+                        file_path = old_file_path;
+                        file = change_from;
+                        change_file(&file_path, &mut file, change_to)?;
+                        change_i -= 1;
+                        continue;
+                    } else {
+                        flashed_message = Some("!!! nothing on the undo stack");
+                        continue;
                     }
-                    PromptAnswer::Yes => {}
+                }
+                PromptAnswer::Yes => {}
+                PromptAnswer::YesDiff => {
+                    yes_diffs.insert(changeset_hash);
+                }
+                PromptAnswer::NoDiff => {
+                    no_diffs.insert(changeset_hash);
                 }
             }
-
-            changed = true;
 
             undo_stack.push_front((file_path.clone(), new_file.to_string(), file.to_string()));
             undo_stack.truncate(1024);
@@ -307,10 +333,6 @@ fn run_ui(
             let new_file = new_file.to_string();
             change_file(&file_path, &mut file, new_file)?;
             change_i += 1;
-        }
-
-        if accept_all && changed {
-            println!("changed {}", file_path.display());
         }
     }
 
@@ -323,8 +345,6 @@ fn run_ui(
 fn print_changeset(mut changeset: difference::Changeset) {
     const MAX_END_PADDING: usize = 5;
     const MAX_START_PADDING: usize = 20;
-
-    use difference::Difference;
 
     let mut diffs = VecDeque::new();
     let mut encountered_diff = false;
@@ -368,4 +388,27 @@ fn print_changeset(mut changeset: difference::Changeset) {
     changeset.diffs = diffs.into_iter().collect();
 
     println!("{}", changeset);
+}
+
+fn hash_changeset(changeset: &difference::Changeset) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    for diff in &changeset.diffs {
+        match diff {
+            Difference::Add(x) => {
+                for line in x.lines() {
+                    hasher.update(b"\x00\n");
+                    hasher.update(line.as_bytes());
+                }
+            },
+            Difference::Rem(x) => {
+                for line in x.lines() {
+                    hasher.update(b"\x01\n");
+                    hasher.update(line.as_bytes());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    hasher.finalize().as_bytes().to_owned()
 }
