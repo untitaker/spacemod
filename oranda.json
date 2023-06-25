@@ -6,6 +6,7 @@
         "path_prefix": "spacemod"
     },
     "styles": {
-        "theme": "hacker"
+        "theme": "hacker",
+        "additional_css": ["./local/custom.css"]
     }
 }

@@ -1,0 +1,4 @@
+h1.title:after {
+    /* that cursor looks like the title is "spacemodl" */
+    content: none !important;
+}
