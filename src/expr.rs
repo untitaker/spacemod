@@ -282,6 +282,10 @@ fn replace_overlapping(
 }
 
 impl<'a> Replacer<'a> {
+    pub fn prefilter_matches(&self, input: &str) -> bool {
+        self.regex.is_match(input)
+    }
+
     pub fn replace<'t>(&self, input: &'t str, sub: &str) -> Cow<'t, str> {
         replace_overlapping(input, |input| {
             let captures = self.regex.captures(input)?;
