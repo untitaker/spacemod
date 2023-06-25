@@ -4,12 +4,10 @@ use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::sync_channel;
-use std::sync::Arc;
 
 use anyhow::{Context, Error};
 use console::{style, Key};
-use jwalk::WalkDir;
-use rayon::prelude::*;
+use ignore::WalkState;
 use structopt::StructOpt;
 
 use expr::{parse_pairs, Expr, Replacer};
@@ -71,72 +69,6 @@ enum PromptAnswer {
     All,
 }
 
-fn matches_filter_extensions(filter_extensions: &[String], path: &Path) -> bool {
-    if filter_extensions.is_empty() {
-        return true;
-    }
-
-    if let Some(path_extension) = path.extension() {
-        if let Some(path_extension_str) = path_extension.to_str() {
-            for extension in filter_extensions {
-                if extension == path_extension_str {
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
-}
-
-fn build_walk_dir<'a>(
-    replacer: &'a Replacer<'a>,
-    filter_extensions: Arc<Vec<String>>,
-    path: &Path,
-) -> impl 'a + ParallelIterator<Item = Result<(PathBuf, String), Error>> {
-    // code mainly lifted from untitaker/hyperlink
-    WalkDir::new(path)
-        .sort(true) // helps branch predictor (?)
-        .skip_hidden(false)
-        .into_iter()
-        .par_bridge()
-        .filter_map(move |entry_result| {
-            let entry = match entry_result {
-                Ok(entry) => entry,
-                Err(e) => return Some(Err(e.into())),
-            };
-
-            if let Some(err) = entry.read_children_error {
-                // https://github.com/Byron/jwalk/issues/40
-                return Some(Err(err.into()));
-            }
-
-            if !entry.file_type().is_file() {
-                return None;
-            }
-
-            if !matches_filter_extensions(&filter_extensions, &entry.path()) {
-                return None;
-            }
-
-            let filetype = entry.file_type();
-            if !filetype.is_file() {
-                return None;
-            }
-            let file_path = entry.path();
-            let file = match fs::read_to_string(&file_path) {
-                Ok(x) => x,
-                Err(_) => return None, // presumably binary file
-            };
-
-            if !replacer.prefilter_matches(&file) {
-                return None;
-            }
-
-            Some(Ok((file_path, file)))
-        })
-}
-
 fn main() -> Result<(), Error> {
     let Cli {
         search,
@@ -151,11 +83,7 @@ fn main() -> Result<(), Error> {
 
     // most of the work we do is kind of I/O bound. rayon assumes CPU-heavy workload. we could
     // look into tokio-uring at some point, but it seems like a hassle wrt ownership
-    let mut threads = threads.unwrap_or_else(|| 4 * num_cpus::get());
-    if threads < 2 {
-        // we need at least two threads, one for file search and one for the UI
-        threads = 2;
-    }
+    let threads = threads.unwrap_or_else(|| 4 * num_cpus::get());
 
     rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
@@ -167,32 +95,65 @@ fn main() -> Result<(), Error> {
         .context("failed to parse search string")?;
     let replacer = expr.get_replacer(multiline, user_defined_pairs)?;
 
-    let mut walk_builders = Vec::new();
-
-    let extensions = Arc::new(extensions);
-
-    if file_or_dir.is_empty() {
-        walk_builders.push(build_walk_dir(&replacer, extensions, Path::new(".")));
+    let mut walk_builder = if file_or_dir.is_empty() {
+        ignore::WalkBuilder::new(".")
     } else {
-        for file in file_or_dir {
-            walk_builders.push(build_walk_dir(&replacer, extensions.clone(), &file));
+        let mut walk_builder = ignore::WalkBuilder::new(&file_or_dir[0]);
+
+        for file in &file_or_dir[1..] {
+            walk_builder.add(file);
         }
+
+        walk_builder
     };
+
+    if !extensions.is_empty() {
+        let mut builder = ignore::overrides::OverrideBuilder::new(".");
+        for ext in extensions {
+            builder.add(&format!("*.{}", ext))?;
+        }
+
+        walk_builder.overrides(builder.build()?);
+    }
 
     let mut result = None;
 
     rayon::scope(|scope| {
         let (sender, receiver) = sync_channel(128);
 
-        for walk_builder in walk_builders {
-            let sender = sender.clone();
-            scope.spawn(|_| {
-                walk_builder.for_each_with(sender, |sender, result| {
-                    // ignore send error because UI thread can quit anytime
-                    sender.send(result).ok();
-                });
+        let replacer2 = &replacer;
+
+        scope.spawn(move |_| {
+            walk_builder.threads(threads).build_parallel().run(|| {
+                let sender = sender.clone();
+                Box::new(move |entry_result| {
+                    let entry = match entry_result {
+                        Ok(x) => x,
+                        Err(e) => {
+                            sender.send(Err(e.into())).ok();
+                            return WalkState::Quit;
+                        }
+                    };
+
+                    let filetype = entry.file_type().unwrap();
+                    if !filetype.is_file() {
+                        return WalkState::Continue;
+                    }
+                    let file_path = entry.path().to_owned();
+                    let file = match fs::read_to_string(&file_path) {
+                        Ok(x) => x,
+                        Err(_) => return WalkState::Continue, // presumably binary file
+                    };
+
+                    if !replacer2.prefilter_matches(&file) {
+                        return WalkState::Continue;
+                    }
+
+                    sender.send(Ok((file_path, file))).ok();
+                    WalkState::Continue
+                })
             });
-        }
+        });
 
         scope.spawn(|_| {
             result = Some(run_ui(
