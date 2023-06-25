@@ -1,14 +1,16 @@
 mod expr;
 
 use std::collections::{BTreeSet, VecDeque};
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::sync_channel;
 
 use anyhow::{Context, Error};
-use console::{style, Key};
-use difference::Difference;
+use console::{style, Key, Style};
 use ignore::WalkState;
+use itertools::Itertools;
+use similar::{ChangeTag, TextDiff};
 use structopt::StructOpt;
 
 use expr::{parse_pairs, Expr, Replacer};
@@ -106,9 +108,11 @@ fn main() -> Result<(), Error> {
     let mut walk_builder = if file_or_dir.is_empty() {
         ignore::WalkBuilder::new(".")
     } else {
-        let mut walk_builder = ignore::WalkBuilder::new(&file_or_dir[0]);
+        // filter out duplicate CLI arguments, because otherwise our entire UI starts misbehaving.
+        let mut file_or_dir = file_or_dir.into_iter().unique();
+        let mut walk_builder = ignore::WalkBuilder::new(&file_or_dir.next().unwrap());
 
-        for file in &file_or_dir[1..] {
+        for file in file_or_dir {
             walk_builder.add(file);
         }
 
@@ -186,7 +190,7 @@ fn run_ui(
 ) -> Result<(), Error> {
     let term = console::Term::stdout();
     let mut walker = itertools::put_back_n(receiver);
-    let mut undo_stack = VecDeque::new();
+    let mut undo_stack = VecDeque::<(PathBuf, String, String)>::new();
     let mut yes_diffs = BTreeSet::new();
     let mut no_diffs = BTreeSet::new();
 
@@ -197,24 +201,26 @@ fn run_ui(
 
         let mut change_i = 0;
 
-        let change_file = |file_path: &Path, file: &mut String, to: String| -> Result<(), Error> {
-            if fs::read_to_string(file_path).map_or(true, |x| x != *file) {
-                anyhow::bail!("file was changed while spacemod is running. Bailing out!");
-            }
-            *file = to;
-            fs::write(file_path, &*file)?;
-            Ok(())
-        };
+        let change_file =
+            |file_path: &Path, change_from: &str, change_to: &str| -> Result<(), Error> {
+                if fs::read_to_string(file_path).map_or(true, |x| x != *change_from) {
+                    anyhow::bail!(
+                        "file {} was changed while spacemod is running. Bailing out!",
+                        file_path.display()
+                    );
+                }
+                fs::write(file_path, change_to)?;
+                Ok(())
+            };
 
         loop {
             let new_file = replacer.replace(&file, replace);
 
             if new_file == file {
-                break;
+                continue 'files;
             }
 
-            let changeset = difference::Changeset::new(&file.to_string(), &new_file, "\n");
-            let changeset_hash = hash_changeset(&changeset);
+            let changeset_hash = hash_changeset(&file, &new_file);
 
             let input = if accept_all || yes_diffs.contains(&changeset_hash) {
                 println!("Automatically changed {}", file_path.display());
@@ -224,7 +230,7 @@ fn run_ui(
             } else {
                 term.clear_screen()?;
 
-                print_changeset(changeset);
+                print_changeset(&file, &new_file);
                 println!(
                     "\n\n\n{path} [{change_i}] {flashed_message}",
                     path = style(file_path.display()).blue(),
@@ -234,7 +240,7 @@ fn run_ui(
 
                 println!(
                     "Accept changes?\n\
-                    {y} [Y]es to all diffs like this\n\
+                    {y} [Y]es to all diffs like this (=sharing underlined part)\n\
                     {n}  [N]o to all diffs like this\n\
                     [u]ndo\n\
                     [A]pprove everything",
@@ -268,9 +274,9 @@ fn run_ui(
                         if old_file_path != file_path {
                             walker.put_back(Ok((file_path, file.clone())));
                         }
-                        file_path = old_file_path;
-                        file = change_from;
-                        change_file(&file_path, &mut file, change_to)?;
+                        change_file(&old_file_path, &change_from, &change_to)?;
+                        file_path = old_file_path.to_owned();
+                        file = change_to.to_owned();
                         change_i -= 1;
                         continue;
                     } else {
@@ -284,6 +290,7 @@ fn run_ui(
                 }
                 PromptAnswer::NoDiff => {
                     no_diffs.insert(changeset_hash);
+                    continue;
                 }
             }
 
@@ -291,7 +298,8 @@ fn run_ui(
             undo_stack.truncate(1024);
 
             let new_file = new_file.to_string();
-            change_file(&file_path, &mut file, new_file)?;
+            change_file(&file_path, &file, &new_file)?;
+            file = new_file;
             change_i += 1;
         }
     }
@@ -302,71 +310,72 @@ fn run_ui(
 /// A function that works around some crappy behavior in the `difference` crate.
 ///
 /// That crate will print out very long files even if there's a minuscle change in it.
-fn print_changeset(mut changeset: difference::Changeset) {
-    const MAX_END_PADDING: usize = 5;
-    const MAX_START_PADDING: usize = 20;
+fn print_changeset(old: &str, new: &str) {
+    struct Line(Option<usize>);
 
-    let mut diffs = VecDeque::new();
-    let mut encountered_diff = false;
-    let mut first_end = None;
-
-    'diff: for diff in changeset.diffs.into_iter() {
-        match diff {
-            Difference::Add(x) => {
-                for line in x.lines() {
-                    diffs.push_back(Difference::Add(line.to_owned()));
-                    first_end = None;
-                    encountered_diff = true;
-                }
-            }
-            Difference::Rem(x) => {
-                for line in x.lines() {
-                    diffs.push_back(Difference::Rem(line.to_owned()));
-                    first_end = None;
-                    encountered_diff = true;
-                }
-            }
-            Difference::Same(x) => {
-                for line in x.lines() {
-                    diffs.push_back(Difference::Same(line.to_owned()));
-                    if encountered_diff
-                        && *first_end.get_or_insert(diffs.len() - 1) + MAX_END_PADDING < diffs.len()
-                    {
-                        break 'diff;
-                    }
-                }
-            }
-        }
-
-        if !encountered_diff {
-            while diffs.len() > MAX_START_PADDING {
-                diffs.pop_front();
+    impl fmt::Display for Line {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            match self.0 {
+                None => write!(f, "    "),
+                Some(idx) => write!(f, "{:<4}", idx + 1),
             }
         }
     }
 
-    changeset.diffs = diffs.into_iter().collect();
+    let diff = TextDiff::from_lines(old, new);
 
-    println!("{}", changeset);
+    for (idx, group) in diff.grouped_ops(3).iter().enumerate() {
+        if idx > 0 {
+            println!("{:-^1$}", "-", 80);
+        }
+        for op in group {
+            for change in diff.iter_inline_changes(op) {
+                let (sign, s) = match change.tag() {
+                    ChangeTag::Delete => ("-", Style::new().red()),
+                    ChangeTag::Insert => ("+", Style::new().green()),
+                    ChangeTag::Equal => (" ", Style::new().dim()),
+                };
+                print!(
+                    "{}{} |{}",
+                    style(Line(change.old_index())).dim(),
+                    style(Line(change.new_index())).dim(),
+                    s.apply_to(sign).bold(),
+                );
+                for (emphasized, value) in change.iter_strings_lossy() {
+                    if emphasized {
+                        print!("{}", s.apply_to(value).underlined().on_black());
+                    } else {
+                        print!("{}", s.apply_to(value));
+                    }
+                }
+                if change.missing_newline() {
+                    println!();
+                }
+            }
+        }
+    }
 }
 
-fn hash_changeset(changeset: &difference::Changeset) -> [u8; 32] {
+fn hash_changeset(old: &str, new: &str) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
-    for diff in &changeset.diffs {
-        match diff {
-            Difference::Add(x) => {
-                for line in x.lines() {
-                    hasher.update(b"\x00\n");
-                    hasher.update(line.as_bytes());
+
+    let diff = TextDiff::from_lines(old, new);
+
+    for group in diff.grouped_ops(3).iter() {
+        for op in group {
+            for change in diff.iter_inline_changes(op) {
+                match change.tag() {
+                    ChangeTag::Delete => hasher.update(b"\x00\n"),
+                    ChangeTag::Insert => hasher.update(b"\x01\n"),
+                    _ => continue,
+                };
+
+                for (emphasized, value) in change.iter_strings_lossy() {
+                    if emphasized {
+                        hasher.update(value.as_bytes());
+                    }
                 }
             }
-            Difference::Rem(x) => {
-                for line in x.lines() {
-                    hasher.update(b"\x01\n");
-                    hasher.update(line.as_bytes());
-                }
-            }
-            _ => {}
         }
     }
 

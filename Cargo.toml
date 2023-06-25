@@ -14,12 +14,12 @@ regex = "1.4.2"
 structopt = "0.3.20"
 anyhow = "1.0.34"
 ignore = "0.4.16"
-difference = "2.0.0"
 console = "0.13.0"
 itertools = "0.10.0"
 num_cpus = "1.15.0"
 blake3 = "1.4.0"
 rayon = "1.7.0"
+similar = { version = "2.2.1", features = ["text"] }
 
 [dev-dependencies]
 insta = "1.2.0"

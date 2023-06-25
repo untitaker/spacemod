@@ -188,7 +188,7 @@ impl Expr {
         let regex_string = self.regex_string();
         let regex = RegexBuilder::new(&regex_string)
             .multi_line(!pairs.is_empty() || multiline)
-            .dot_matches_new_line(!pairs.is_empty())
+            .dot_matches_new_line(!pairs.is_empty() || multiline)
             .build()?;
 
         let reverse_pairs = pairs.iter().map(|(a, b)| (b.clone(), a.clone())).collect();
