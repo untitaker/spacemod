@@ -18,6 +18,10 @@ fn test_basic() -> Result<(), Error> {
     ----- stdout -----
     Automatically changed ./content
 
+    1 diffs applied (1 automatically)
+    0 diffs rejected (0 automatically)
+    0 diffs undone
+
     ----- stderr -----
     "###);
 
@@ -36,6 +40,10 @@ fn test_parenthesis() -> Result<(), Error> {
     exit_code: 0
     ----- stdout -----
     Automatically changed ./content
+
+    1 diffs applied (1 automatically)
+    0 diffs rejected (0 automatically)
+    0 diffs undone
 
     ----- stderr -----
     "###);
@@ -56,6 +64,10 @@ fn test_no_parenthesis() -> Result<(), Error> {
     exit_code: 0
     ----- stdout -----
 
+    0 diffs applied (0 automatically)
+    0 diffs rejected (0 automatically)
+    0 diffs undone
+
     ----- stderr -----
     "###);
 
@@ -75,6 +87,10 @@ fn test_fixed_string() -> Result<(), Error> {
     exit_code: 0
     ----- stdout -----
     Automatically changed ./content
+
+    1 diffs applied (1 automatically)
+    0 diffs rejected (0 automatically)
+    0 diffs undone
 
     ----- stderr -----
     "###);

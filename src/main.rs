@@ -44,6 +44,10 @@ struct Cli {
     #[structopt(short = 'S', long = "spacemode")]
     spacemode: bool,
 
+    /// Minimize output, hide prints about files changed and statistics at the end.
+    #[structopt(short = 'q', long = "quiet")]
+    quiet: bool,
+
     /// Interpret SEARCH as literal string.
     ///
     /// Disables all pattern-matching.
@@ -104,6 +108,7 @@ fn main() -> Result<(), Error> {
         pairs,
         spacemode,
         fixed_strings,
+        quiet,
     } = Cli::from_args();
 
     // most of the work we do is kind of I/O bound. rayon assumes CPU-heavy workload. we could
@@ -202,6 +207,7 @@ fn main() -> Result<(), Error> {
             result = Some(run_ui(
                 &replace,
                 accept_all,
+                quiet,
                 &replacer,
                 receiver.into_iter(),
             ));
@@ -214,6 +220,7 @@ fn main() -> Result<(), Error> {
 fn run_ui(
     replace: &str,
     mut accept_all: bool,
+    quiet: bool,
     replacer: &Replacer<'_>,
     receiver: impl Iterator<Item = Result<(PathBuf, String), Error>>,
 ) -> Result<(), Error> {
@@ -222,6 +229,12 @@ fn run_ui(
     let mut undo_stack = VecDeque::<(PathBuf, String, String)>::new();
     let mut yes_diffs = BTreeSet::new();
     let mut no_diffs = BTreeSet::new();
+
+    let mut stat_changes_applied = 0;
+    let mut stat_changes_rejected = 0;
+    let mut stat_changes_automatic = 0;
+    let mut stat_changes_rejected_automatic = 0;
+    let mut stat_changes_undone = 0;
 
     'files: while let Some(result) = walker.next() {
         let (mut file_path, mut file) = result?;
@@ -252,9 +265,13 @@ fn run_ui(
             let changeset_hash = hash_changeset(&file, &new_file);
 
             let input = if accept_all || yes_diffs.contains(&changeset_hash) {
-                println!("Automatically changed {}", file_path.display());
+                stat_changes_automatic += 1;
+                if !quiet {
+                    println!("Automatically changed {}", file_path.display());
+                }
                 PromptAnswer::Yes
             } else if no_diffs.contains(&changeset_hash) {
+                stat_changes_rejected_automatic += 1;
                 PromptAnswer::No
             } else {
                 term.clear_screen()?;
@@ -292,6 +309,7 @@ fn run_ui(
 
             match input {
                 PromptAnswer::No => {
+                    stat_changes_rejected += 1;
                     // BUG: this skips over the entire file instead of skipping a single change
                     continue 'files;
                 }
@@ -306,6 +324,7 @@ fn run_ui(
                         change_file(&old_file_path, &change_from, &change_to)?;
                         file_path = old_file_path.to_owned();
                         file = change_to.to_owned();
+                        stat_changes_undone += 1;
                         change_i -= 1;
                         continue;
                     } else {
@@ -318,6 +337,7 @@ fn run_ui(
                     yes_diffs.insert(changeset_hash);
                 }
                 PromptAnswer::NoDiff => {
+                    stat_changes_rejected += 1;
                     no_diffs.insert(changeset_hash);
                     continue;
                 }
@@ -328,9 +348,25 @@ fn run_ui(
 
             let new_file = new_file.to_string();
             change_file(&file_path, &file, &new_file)?;
+            stat_changes_applied += 1;
             file = new_file;
             change_i += 1;
         }
+    }
+
+    if !quiet {
+        // print some stats for the user, also to self-validate how much time they saved using
+        // YesDiff/NoDiff
+        println!();
+        println!(
+            "{} diffs applied ({} automatically)",
+            stat_changes_applied, stat_changes_automatic
+        );
+        println!(
+            "{} diffs rejected ({} automatically)",
+            stat_changes_rejected, stat_changes_rejected_automatic
+        );
+        println!("{} diffs undone", stat_changes_undone);
     }
 
     Ok(())
