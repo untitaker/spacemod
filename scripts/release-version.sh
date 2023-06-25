@@ -28,5 +28,7 @@ git commit -am "version $new_version"
 git tag v$new_version
 
 echo "things left to do:"
+echo "  git push"
+echo "  git push --tags"
 echo "  cargo publish"
 echo "  npm publish https://github.com/untitaker/spacemod/releases/download/v$new_version/spacemod-npm-package.tar.gz"
