@@ -11,7 +11,11 @@
         }
     },
     "build": {
-        "path_prefix": "spacemod"
+        "path_prefix": "spacemod",
+        "additional_pages": {
+            "Matching modes": "./docs/matching.md",
+            "Alternatives": "./docs/alternatives.md"
+        }
     },
     "styles": {
         "theme": "hacker",
