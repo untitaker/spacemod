@@ -101,6 +101,18 @@ impl Expr {
         Ok(rv)
     }
 
+    pub fn parse_fixed_string(input: &str) -> Result<Self, ParseError> {
+        Ok(Expr {
+            tokens: vec![Token::Text(regex::escape(input))],
+        })
+    }
+
+    pub fn parse_regex(input: &str) -> Result<Self, ParseError> {
+        Ok(Expr {
+            tokens: vec![Token::Text(input.to_owned())],
+        })
+    }
+
     pub fn parse_expr(input: &str, user_defined_pairs: Pairs) -> Result<Self, ParseError> {
         let pairs = {
             let mut rv = default_pairs();
