@@ -240,7 +240,7 @@ fn run_ui(
 
                 println!(
                     "Accept changes?\n\
-                    {y} [Y]es to all diffs like this (=exact character match of added/removed)\n\
+                    {y} [Y]es to all diffs like this (=exact character match of changed lines)\n\
                     {n}  [N]o to all diffs like this\n\
                     [u]ndo\n\
                     [A]pprove everything",
