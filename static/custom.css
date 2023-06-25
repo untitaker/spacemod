@@ -1,0 +1,26 @@
+h1.title {
+    text-shadow: 10px 10px #27272A;
+}
+
+h1.title:before {
+    text-shadow: none;
+}
+
+h1.title:after {
+    /* that cursor looks like the title is "spacemodl" */
+    content: none !important;
+}
+
+code {
+    background: #27272A !important;
+    border: 4px solid #27272A;
+}
+
+body {
+    background: black !important;
+}
+
+img {
+    padding: 4px;
+    border: 2px solid #27272A;
+}

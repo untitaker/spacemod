@@ -1,18 +1,46 @@
+<div class="oranda-hide">
+
 # spacemod
 
-`spacemod` is a text search-and-replace tool optimized towards refactoring code.
-It is very similar to [fastmod](https://github.com/facebookincubator/fastmod)
-but extends the regex syntax with support for matching parenthesized
-expressions.
+</div>
 
-`spacemod` ideally allows you to write more naive regexes and worry less about
-overzealous wildcard matching.
+`spacemod` is a text search-and-replace tool optimized towards refactoring
+code.
 
-***`spacemod` is still alpha software.*** Please [report](https://github.com/untitaker/spacemod/issues) any bugs you find.
+<p><img src="./static/screenshot.png" /></p>
 
-## Example
+It is very similar to [fastmod](https://github.com/facebookincubator/fastmod),
+but with some additional features:
 
-Let's say you have the following piece of code:
+* **Undo stack.** Approved a diff too soon? Hit `[u]ndo` to revert.
+* **Yes to all diffs like this.** Auto-approve future diffs with the exact same content.
+* **Parenthesis-matching (experimental).** Besides regex, spacemod also
+  supports a custom regex-like language that requires less escaping and
+  whitespace-handling.
+* **Parallelism.** `spacemod` is not quite as CPU-efficient as fastmod, but
+  compensates by using background threads to search files while you approve
+  diffs.
+
+<div class="oranda-hide">
+
+## Installation
+
+Check [the website](https://untitaker.github.io/spacemod/) for installation options.
+
+</div>
+
+## Matching modes
+
+By default, your pattern is interpreted as a regular RE2-style regex using
+[regex](https://docs.rs/regex/) crate.
+
+`spacemod` provides two flags to change that:
+
+* `-S` to use parenthesis-matching and implicit whitespace, a.k.a "space mode".
+* `-F` to interpret the pattern as a literal string to find, same as `-F` in
+  fastmod.
+
+`-S` requires further explanation. Let's motivate it with an example:
 
 ```rust
 vec!["foo".to_string(), "bar".to_string(), "baz".to_string()]
@@ -52,17 +80,19 @@ Spacing out parenthesis and quotes tells spacemod that those tokens, `""` and `(
 * can have surrounding whitespace (including newlines)
 * are literals (fewer backslashes!)
 
-## Installation
+As a result of implicit whitespace, spacemod would have also found all matches
+in the following code:
 
-Check out this repository, [install Rust](https://rustup.rs/), and run:
+```rust
+"
+foo".to_string(
+)
 
-```bash
-cargo build --release
+"foo"
+    .to_string()
 ```
 
-Your binary is in `./target/release/spacemod`.
-
-## Parenthesis matching
+### Syntax reference
 
 `spacemod`'s pattern syntax consists of tokens delimited by a single space each.
 A token can either be a parenthesis/quote, or a substring of a regex:
@@ -124,6 +154,10 @@ shell-scripts.
   bit of semantic knowledge, but also general text matching abilities that go
   beyond regular expressions.
 
+<div class="oranda-hide">
+
 ## License
 
 Licensed under `MIT`, see [`./LICENSE`](./LICENSE).
+
+</div>

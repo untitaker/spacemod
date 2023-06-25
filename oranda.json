@@ -7,6 +7,6 @@
     },
     "styles": {
         "theme": "hacker",
-        "additional_css": ["./local/custom.css"]
+        "additional_css": ["./static/custom.css"]
     }
 }
