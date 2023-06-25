@@ -22,4 +22,7 @@ rayon = "1.7.0"
 similar = { version = "2.2.1", features = ["text"] }
 
 [dev-dependencies]
-insta = "1.2.0"
+# https://github.com/mitsuhiko/insta-cmd/issues/7
+insta = "=1.18.0"
+insta-cmd = "0.2.0"
+tempfile = "3.6.0"
