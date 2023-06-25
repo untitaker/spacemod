@@ -35,6 +35,7 @@ jobs:
         run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.0.7/cargo-dist-installer.sh | sh
       - name: Run oranda
         run: oranda build
+      - run: find public/
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v1
         with:
