@@ -4,5 +4,8 @@
     },
     "build": {
         "path_prefix": "spacemod"
+    },
+    "styles": {
+        "theme": "hacker"
     }
 }
