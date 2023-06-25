@@ -240,7 +240,7 @@ fn run_ui(
 
                 println!(
                     "Accept changes?\n\
-                    {y} [Y]es to all diffs like this (=sharing underlined part)\n\
+                    {y} [Y]es to all diffs like this (=exact character match of added/removed)\n\
                     {n}  [N]o to all diffs like this\n\
                     [u]ndo\n\
                     [A]pprove everything",
@@ -370,10 +370,8 @@ fn hash_changeset(old: &str, new: &str) -> [u8; 32] {
                     _ => continue,
                 };
 
-                for (emphasized, value) in change.iter_strings_lossy() {
-                    if emphasized {
-                        hasher.update(value.as_bytes());
-                    }
+                for (_emphasized, value) in change.iter_strings_lossy() {
+                    hasher.update(value.as_bytes());
                 }
             }
         }
