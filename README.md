@@ -25,6 +25,9 @@ $ spacemod -S \
   'copy_file ( to_file= (.*) , from_file= (.*) )' \
   'copy_file($2, $1)' \
   example.py
+
+# spacemod will open interactive TUI and ask for approval of diffs. Use
+# --accept-all to use spacemod non-interactively.
 ```
 
 ```python
