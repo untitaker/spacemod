@@ -795,6 +795,31 @@ fn test_html5gum() {
 }
 
 #[test]
+fn test_copy_file() {
+    let file = r#"
+    copy_file(to=from, from=to)
+
+    copy_file(
+        to=get_file(filepath, mode),
+        from=get_file_writer(other_filepath, other_mode)
+    )
+    "#;
+
+    let search = r#"copy_file ( to= (.*) , from= (.*) )"#;
+    let replace = r#"copy_file($2, $1)"#;
+
+    replacer_test!(file, search, replace, @r###"
+    // spacemod: steps_taken=3
+
+        copy_file(to, from)
+
+        copy_file(get_file_writer(other_filepath, other_mode)
+        , get_file(filepath, mode))
+        
+    "###);
+}
+
+#[test]
 fn test_commas() {
     insta::assert_debug_snapshot!(Expr::parse_expr(r#""request_data": json.dumps ( { "options": self.options } ) ,"#, Default::default()), @r###"
     Ok(

@@ -7,7 +7,33 @@
 `spacemod` is a text search-and-replace tool optimized towards refactoring
 code.
 
-<p><img src="./static/screenshot.png" /></p>
+```python
+# example.py (before)
+copy_file(to_file=to_file, from_file=from_file)
+
+copy_file(
+    to_file=get_file(filepath, mode),
+    from_file=get_file_writer(other_filepath, other_mode)
+)
+```
+
+```sh
+# Use spacemod's custom pattern-matching language to deal with whitespace easier.
+# Without -S, normal regex patterns are assumed.
+
+$ spacemod -S \
+  'copy_file ( to_file= (.*) , from_file= (.*) )' \
+  'copy_file($2, $1)' \
+  example.py
+```
+
+```python
+# example.py (after)
+copy_file(from_file, to_file)
+
+copy_file(get_file_writer(other_filepath, other_mode)
+, get_file(filepath, mode))
+```
 
 It is very similar to [fastmod](https://github.com/facebookincubator/fastmod),
 but with some additional features:
@@ -17,9 +43,6 @@ but with some additional features:
 * **Parenthesis-matching (experimental).** Besides regex, spacemod also
   supports a custom regex-like language that requires less escaping and
   whitespace-handling.
-* **Parallelism.** `spacemod` is not quite as CPU-efficient as fastmod, but
-  compensates by using background threads to search files while you approve
-  diffs.
 
 <div class="oranda-hide">
 
