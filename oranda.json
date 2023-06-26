@@ -18,7 +18,7 @@
         }
     },
     "styles": {
-        "theme": "hacker",
+        "theme": "dark",
         "additional_css": ["./static/custom.css"]
     }
 }
