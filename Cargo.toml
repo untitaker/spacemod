@@ -29,9 +29,8 @@ similar = { version = "2.2.1", features = ["text"] }
 clap = { version = "3.2.8", features = ["std", "derive", "color"], default-features = false }
 
 [dev-dependencies]
-# https://github.com/mitsuhiko/insta-cmd/issues/7
-insta = "=1.18.0"
-insta-cmd = "0.2.0"
+insta = "1.30.0"
+insta-cmd = "0.3.0"
 tempfile = "3.6.0"
 
 # The profile that 'cargo dist' will build with
