@@ -34,7 +34,6 @@ jobs:
       - uses: actions/checkout@v3
       - uses: actions/configure-pages@v1
       - name: Install Oranda
-        # We need oranda pre-release so that we can use page_prefix
         run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/oranda/releases/download/v0.1.0/oranda-installer.sh | sh
       - run: oranda build
       - run: find public/
