@@ -31,8 +31,3 @@ shell-scripts.
 * [Beyond Grep](https://beyondgrep.com/more-tools/) has a table of
   (regex-based) *text search* tools. The best one IMO is
   [`ripgrep`](https://github.com/BurntSushi/ripgrep).
-
-* [`semgrep`](https://github.com/returntocorp/semgrep) is a search tool with a
-  bit of semantic knowledge, but also general text matching abilities that go
-  beyond regular expressions.
-
