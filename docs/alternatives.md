@@ -26,6 +26,8 @@ shell-scripts.
 * [`spatch`](https://github.com/facebookarchive/pfff/wiki/Spatch) from the
   PFFF-suite appears to be very similar to `comby`.
 
+* [`gritql`](https://github.com/getgrit/gritql) seems similar to `ast-grep`.
+
 ## Other tools in the same space
 
 * [Beyond Grep](https://beyondgrep.com/more-tools/) has a table of
