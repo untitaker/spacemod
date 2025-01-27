@@ -293,7 +293,7 @@ fn replace_overlapping(
     prefix.into()
 }
 
-impl<'a> Replacer<'a> {
+impl Replacer<'_> {
     pub fn prefilter_matches(&self, input: &str) -> bool {
         self.regex.is_match(input)
     }

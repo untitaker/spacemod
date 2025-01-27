@@ -144,7 +144,7 @@ fn main() -> Result<(), Error> {
     } else {
         // filter out duplicate CLI arguments, because otherwise our entire UI starts misbehaving.
         let mut file_or_dir = file_or_dir.into_iter().unique();
-        let mut walk_builder = ignore::WalkBuilder::new(&file_or_dir.next().unwrap());
+        let mut walk_builder = ignore::WalkBuilder::new(file_or_dir.next().unwrap());
 
         for file in file_or_dir {
             walk_builder.add(file);
