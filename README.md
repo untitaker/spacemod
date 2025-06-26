@@ -50,29 +50,15 @@ but with some additional features:
   higher mtime first, because they are more likely to be relevant to what you
   are working on.
 
+<!-- oranda already provides installation instructions -->
 <div class="oranda-hide">
 
-## Installation
+## Documentation
 
-<!-- oranda already provides installation instructions -->
-
-Check [the website](https://untitaker.github.io/spacemod/) for installation options.
-
-<!-- Hide these docs links as well because oranda does not rewrite the links to .md files, and I don't care enough to fix it -->
-
-## Matching Modes
-
-By default, you use regexes to replace text. See [Matching
-modes](./docs/matching.md) for the alternative modes that `spacemod` supports.
-
-## Alternatives
-
-There are many tools like `spacemod`, some of which may suit your needs better. Take a look at [Alternatives](./docs/alternatives.md).
+Check [the website](https://untitaker.github.io/spacemod/) for installation and usage.
 
 ## License
 
-<!-- link is busted in oranda -->
-
-Licensed under `MIT`, see [`./LICENSE`](./LICENSE).
+Licensed under `MIT`, see `./LICENSE`.
 
 </div>
