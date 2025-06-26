@@ -38,7 +38,7 @@ jobs:
       - uses: untitaker/hyperlink@0.1.43
         with:
           args: /tmp/public --sources docs/
-      - uses: actions/upload-pages-artifact@v1
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: ./public/
 

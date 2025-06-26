@@ -46,6 +46,9 @@ but with some additional features:
 * **Parenthesis-matching (experimental).** Besides regex, spacemod also
   supports a custom regex-like language that requires less escaping and
   whitespace-handling.
+* **Replace recently edited files first.** Spacemod tries to show files with
+  higher mtime first, because they are more likely to be relevant to what you
+  are working on.
 
 <!-- oranda already provides installation instructions -->
 <div class="oranda-hide">
