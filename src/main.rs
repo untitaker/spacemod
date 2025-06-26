@@ -1,5 +1,6 @@
 mod expr;
 
+use std::cmp::Reverse;
 use std::collections::{BTreeSet, VecDeque};
 use std::fmt;
 use std::fs;
@@ -167,18 +168,34 @@ fn main() -> Result<(), Error> {
     let mut result = None;
 
     rayon::scope(|scope| {
-        let (sender, receiver) = sync_channel(128);
+        let (walk_sender, walk_receiver) = sync_channel(128);
 
         let replacer2 = &replacer;
 
         scope.spawn(move |_| {
             walk_builder.threads(threads).build_parallel().run(|| {
-                let sender = sender.clone();
+                let walk_sender = walk_sender.clone();
                 Box::new(move |entry_result| {
                     let entry = match entry_result {
                         Ok(x) => x,
                         Err(e) => {
-                            sender.send(Err(e.into())).ok();
+                            walk_sender.send(Err(e.into())).ok();
+                            return WalkState::Quit;
+                        }
+                    };
+
+                    let metadata = match entry.metadata() {
+                        Ok(x) => x,
+                        Err(e) => {
+                            walk_sender.send(Err(e.into())).ok();
+                            return WalkState::Quit;
+                        }
+                    };
+
+                    let modified = match metadata.modified() {
+                        Ok(x) => x,
+                        Err(e) => {
+                            walk_sender.send(Err(e.into())).ok();
                             return WalkState::Quit;
                         }
                     };
@@ -188,19 +205,48 @@ fn main() -> Result<(), Error> {
                         return WalkState::Continue;
                     }
                     let file_path = entry.path().to_owned();
-                    let file = match fs::read_to_string(&file_path) {
-                        Ok(x) => x,
-                        Err(_) => return WalkState::Continue, // presumably binary file
+                    let Ok(file) = fs::read_to_string(&file_path) else {
+                        return WalkState::Continue; // presumably binary file
                     };
 
                     if !replacer2.prefilter_matches(&file) {
                         return WalkState::Continue;
                     }
 
-                    sender.send(Ok((file_path, file))).ok();
+                    let _ = walk_sender.send(Ok((file_path, file, modified)));
                     WalkState::Continue
                 })
             });
+        });
+
+        let (sorter_sender, sorter_receiver) = sync_channel(128);
+
+        scope.spawn(move |_| {
+            let mut sorted_files = Vec::new();
+            for result in &walk_receiver {
+                match result {
+                    Ok(tuple) => {
+                        sorted_files.push(tuple);
+                    }
+                    Err(e) => {
+                        let _ = sorter_sender.send(Err(e));
+                    }
+                };
+
+                if sorted_files.len() > 500_000 {
+                    break;
+                }
+            }
+
+            sorted_files.sort_by_key(|(_, _, mtime)| Reverse(*mtime));
+
+            for (filepath, file, _mtime) in sorted_files {
+                let _ = sorter_sender.send(Ok((filepath, file)));
+            }
+
+            for tuple in walk_receiver {
+                let _ = sorter_sender.send(tuple.map(|(file, filepath, _mtime)| (file, filepath)));
+            }
         });
 
         scope.spawn(|_| {
@@ -209,7 +255,7 @@ fn main() -> Result<(), Error> {
                 accept_all,
                 quiet,
                 &replacer,
-                receiver.into_iter(),
+                sorter_receiver.into_iter(),
             ));
         });
     });
