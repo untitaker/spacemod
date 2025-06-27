@@ -1,6 +1,6 @@
 [package]
 name = "spacemod"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["Markus Unterwaditzer <markus-honeypot@unterwaditzer.net>"]
 repository = "https://github.com/untitaker/spacemod"
 homepage = "https://github.com/untitaker/quickenv"
