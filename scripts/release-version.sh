@@ -27,8 +27,9 @@ git add Cargo.toml
 git commit -am "version $new_version"
 git tag v$new_version
 
+git push
+git push origin "v$new_version"
+cargo publish
+
 echo "things left to do:"
-echo "  git push"
-echo "  git push --tags"
-echo "  cargo publish"
 echo "  npm publish https://github.com/untitaker/spacemod/releases/download/v$new_version/spacemod-npm-package.tar.gz"
