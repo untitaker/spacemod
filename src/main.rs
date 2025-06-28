@@ -404,9 +404,7 @@ fn run_ui(
         // print some stats for the user, also to self-validate how much time they saved using
         // YesDiff/NoDiff
         println!();
-        println!(
-            "{stat_changes_applied} diffs applied ({stat_changes_automatic} automatically)"
-        );
+        println!("{stat_changes_applied} diffs applied ({stat_changes_automatic} automatically)");
         println!(
             "{stat_changes_rejected} diffs rejected ({stat_changes_rejected_automatic} automatically)"
         );
