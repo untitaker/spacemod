@@ -159,7 +159,7 @@ fn main() -> Result<(), Error> {
     if !extensions.is_empty() {
         let mut builder = ignore::overrides::OverrideBuilder::new(".");
         for ext in extensions {
-            builder.add(&format!("*.{}", ext))?;
+            builder.add(&format!("*.{ext}"))?;
         }
 
         walk_builder.overrides(builder.build()?);
@@ -405,14 +405,12 @@ fn run_ui(
         // YesDiff/NoDiff
         println!();
         println!(
-            "{} diffs applied ({} automatically)",
-            stat_changes_applied, stat_changes_automatic
+            "{stat_changes_applied} diffs applied ({stat_changes_automatic} automatically)"
         );
         println!(
-            "{} diffs rejected ({} automatically)",
-            stat_changes_rejected, stat_changes_rejected_automatic
+            "{stat_changes_rejected} diffs rejected ({stat_changes_rejected_automatic} automatically)"
         );
-        println!("{} diffs undone", stat_changes_undone);
+        println!("{stat_changes_undone} diffs undone");
     }
 
     Ok(())
