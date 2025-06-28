@@ -84,6 +84,9 @@ struct Cli {
     /// times.
     #[structopt(short = 'p', long = "pairs")]
     pairs: Vec<String>,
+    /// Maximum file size to process (in MB). Use 0 to disable limit.
+    #[structopt(long = "max-file-size", default_value = "5")]
+    max_file_size_mb: usize,
 }
 
 #[derive(Copy, Clone)]
@@ -110,6 +113,7 @@ fn main() -> Result<(), Error> {
         spacemode,
         fixed_strings,
         quiet,
+        max_file_size_mb,
     } = Cli::from_args();
 
     // most of the work we do is kind of I/O bound. rayon assumes CPU-heavy workload. we could
@@ -209,6 +213,20 @@ fn main() -> Result<(), Error> {
                         return WalkState::Continue; // presumably binary file
                     };
 
+                    // Check file size limit
+                    if max_file_size_mb > 0 {
+                        let size_mb = file.len() / (1024 * 1024);
+                        if size_mb > max_file_size_mb {
+                            walk_sender.send(Err(anyhow::anyhow!(
+                                "File {} is {}MB, exceeding limit of {}MB. Use --max-file-size to increase or 0 to disable.",
+                                file_path.display(),
+                                size_mb,
+                                max_file_size_mb
+                            ))).ok();
+                            return WalkState::Continue;
+                        }
+                    }
+
                     if !replacer2.prefilter_matches(&file) {
                         return WalkState::Continue;
                     }
@@ -256,6 +274,7 @@ fn main() -> Result<(), Error> {
                 quiet,
                 &replacer,
                 sorter_receiver.into_iter(),
+                max_file_size_mb,
             ));
         });
     });
@@ -269,6 +288,7 @@ fn run_ui(
     quiet: bool,
     replacer: &Replacer<'_>,
     receiver: impl Iterator<Item = Result<(PathBuf, String), Error>>,
+    max_file_size_mb: usize,
 ) -> Result<(), Error> {
     let term = console::Term::stdout();
     let mut walker = itertools::put_back_n(receiver);
@@ -306,6 +326,19 @@ fn run_ui(
 
             if new_file == file {
                 continue 'files;
+            }
+
+            // Check for file growth during processing
+            if max_file_size_mb > 0 {
+                let size_mb = new_file.len() / (1024 * 1024);
+                if size_mb > max_file_size_mb {
+                    anyhow::bail!(
+                        "File {} grew to {}MB during processing, exceeding limit of {}MB. Use --max-file-size to increase.",
+                        file_path.display(),
+                        size_mb,
+                        max_file_size_mb
+                    );
+                }
             }
 
             let changeset_hash = hash_changeset(&file, &new_file);
